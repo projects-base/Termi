@@ -1,6 +1,9 @@
 <script>
     import { settingsOpen, settingsStore } from "./stores.js";
-    import { SaveSettings, RestartTerminal } from "../wailsjs/go/main/App.js";
+    import { SaveSettings } from "../wailsjs/go/main/App.js";
+    import { createEventDispatcher } from "svelte";
+
+    const dispatch = createEventDispatcher();
 
     let fontSize = 14;
     let theme = "dark";
@@ -14,17 +17,14 @@
     }
 
     async function applySettings() {
-        const newSettings = { fontSize, theme, shell };
+        const next = { fontSize, theme, shell };
         const shellChanged = shell !== $settingsStore.shell;
-        settingsStore.set(newSettings);
-        await SaveSettings(newSettings);
+        settingsStore.set(next);
+        await SaveSettings(next);
 
-        // Apply theme to document
-        document.documentElement.setAttribute("data-theme", theme);
-
-        if (shellChanged) {
-            await RestartTerminal();
-        }
+        // App owns the terminals, so it applies the change and restarts the
+        // shell if it needs to — this panel only reports what was chosen.
+        dispatch("apply", { settings: next, shellChanged });
     }
 
     function close() {
@@ -36,7 +36,10 @@
     }
 
     function handleKeydown(e) {
-        if (e.key === "Escape") close();
+        if (e.key === "Escape" && $settingsOpen) {
+            e.stopPropagation();
+            close();
+        }
     }
 </script>
 

@@ -33,6 +33,10 @@ type TerminalSession struct {
 	Cwd              string
 	CommandStartTime time.Time
 	CommandPending   bool
+
+	// writeMu serializes PTY writes. Wails runs every bound call in its own
+	// goroutine, so without it two inputs can interleave mid-command.
+	writeMu sync.Mutex
 }
 
 // FileEntry represents a single file or folder in the tree
@@ -248,10 +252,12 @@ func (a *App) CloseTerminal(tabID string) error {
 	return nil
 }
 
-// RestartTerminal tears down the current PTY and starts a new one with the same ID logic
+// RestartTerminal tears down a tab's PTY and starts a fresh one in the same
+// directory, returning the new session ID. Used when the configured shell changes.
 func (a *App) RestartTerminal(tabID string) (string, error) {
+	dir := a.GetWorkingDir(tabID)
 	a.CloseTerminal(tabID)
-	return a.StartTerminal("")
+	return a.StartTerminal(dir)
 }
 
 // detectCwdChange parses PTY output to detect PowerShell prompt and extract cwd
@@ -316,22 +322,118 @@ func (a *App) detectCwdChange(tabID string, chunk string) {
 	a.mu.Unlock()
 }
 
-// WriteToTerminal takes input from the Svelte UI and pipes it to the actual PTY
-func (a *App) WriteToTerminal(tabID string, input string) {
+// ---------- PTY INPUT ----------
+
+const (
+	// Bulk input is fed to ConPTY in paced slices rather than one burst. A single
+	// large write is not guaranteed to be drained before the console's input buffer
+	// fills, and the shell only reads it between commands; pacing keeps the pressure
+	// low enough that a long paste is not left half-delivered.
+	ptyChunkSize  = 512
+	ptyChunkPause = 3 * time.Millisecond
+)
+
+// session looks up a live session by tab ID.
+func (a *App) session(tabID string) *TerminalSession {
 	a.mu.Lock()
-	session, exists := a.sessions[tabID]
-	if exists {
-		// Track command start time for toast notifications
-		if strings.Contains(input, "\r") || strings.Contains(input, "\n") {
-			session.CommandStartTime = time.Now()
-			session.CommandPending = true
+	defer a.mu.Unlock()
+	return a.sessions[tabID]
+}
+
+// markCommandPending starts the long-command timer when input submits a line.
+func (a *App) markCommandPending(session *TerminalSession, input string) {
+	if !strings.ContainsAny(input, "\r\n") {
+		return
+	}
+	a.mu.Lock()
+	session.CommandStartTime = time.Now()
+	session.CommandPending = true
+	a.mu.Unlock()
+}
+
+// writeToPty feeds data to the PTY in bounded chunks. The per-session lock is held
+// for the whole payload, so a concurrent write can never land in the middle of it.
+func (a *App) writeToPty(session *TerminalSession, data []byte) error {
+	session.writeMu.Lock()
+	defer session.writeMu.Unlock()
+
+	for len(data) > 0 {
+		end := len(data)
+		if end > ptyChunkSize {
+			end = ptyChunkSize
+		}
+		for off := 0; off < end; {
+			n, err := session.PtyTerm.Write(data[off:end])
+			if err != nil {
+				return err
+			}
+			if n <= 0 {
+				return fmt.Errorf("pty write stalled after %d bytes", off)
+			}
+			off += n
+		}
+		data = data[end:]
+		if len(data) > 0 {
+			time.Sleep(ptyChunkPause)
 		}
 	}
-	a.mu.Unlock()
+	return nil
+}
 
-	if exists && session.PtyTerm != nil {
-		session.PtyTerm.Write([]byte(input))
+// WriteToTerminal takes keystroke-sized input from the Svelte UI and pipes it to
+// the actual PTY. Clipboard or multi-line text should go through PasteToTerminal.
+func (a *App) WriteToTerminal(tabID string, input string) error {
+	session := a.session(tabID)
+	if session == nil || session.PtyTerm == nil {
+		return nil
 	}
+	a.markCommandPending(session, input)
+	return a.writeToPty(session, []byte(input))
+}
+
+// PasteToTerminal writes bulk text (clipboard, dropped paths, multi-line blocks) to
+// the PTY, normalized to the shell's line ending.
+//
+// bracketed says whether the program in the foreground has turned on bracketed
+// paste (DECSET 2004). When it has, the block is wrapped in the paste markers so
+// the line editor takes it as one insertion rather than a stream of keystrokes.
+// When it has not — cmd.exe, or a REPL running inside the shell — the markers
+// would be echoed as literal text, so they are left off.
+func (a *App) PasteToTerminal(tabID string, text string, bracketed bool) error {
+	session := a.session(tabID)
+	if session == nil || session.PtyTerm == nil {
+		return nil
+	}
+
+	payload := normalizeInput(text)
+	if payload == "" {
+		return nil
+	}
+	a.markCommandPending(session, payload)
+
+	if bracketed {
+		payload = "\x1b[200~" + payload + "\x1b[201~"
+	}
+	return a.writeToPty(session, []byte(payload))
+}
+
+// normalizeInput turns arbitrary pasted text into something a console line editor
+// accepts: no NULs, and exactly one \r per line break.
+//
+// A trailing newline is kept on a single-line paste, where running it straight away
+// is what people expect, and dropped from a multi-line block, so the last line lands
+// on the prompt for review rather than firing the moment it arrives.
+func normalizeInput(text string) string {
+	text = strings.ReplaceAll(text, "\x00", "")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+
+	body := strings.TrimRight(text, "\n")
+	if !strings.Contains(body, "\n") && len(body) < len(text) {
+		// Single line that came with a newline — keep one, so it runs.
+		body += "\n"
+	}
+	return strings.ReplaceAll(body, "\n", "\r")
 }
 
 // ResizeTerminal resizes the PTY to match the xterm.js dimensions
@@ -451,6 +553,130 @@ func (a *App) LoadCommandHistory() []string {
 // ClearCommandHistory truncates the history file
 func (a *App) ClearCommandHistory() {
 	os.WriteFile(historyPath(), []byte{}, 0644)
+}
+
+// ---------- RECENT PATHS ----------
+
+// RecentPath is a directory the user has worked in, newest first.
+type RecentPath struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	LastUsed int64  `json:"lastUsed"`
+}
+
+const maxRecentPaths = 50
+
+// recentMu guards the recent-paths file against concurrent read/modify/write.
+var recentMu sync.Mutex
+
+func recentPathsFile() string {
+	return filepath.Join(configDir(), "recent.json")
+}
+
+func readRecentPaths() []RecentPath {
+	data, err := os.ReadFile(recentPathsFile())
+	if err != nil {
+		return []RecentPath{}
+	}
+	var list []RecentPath
+	if json.Unmarshal(data, &list) != nil {
+		return []RecentPath{}
+	}
+	return list
+}
+
+func writeRecentPaths(list []RecentPath) {
+	if len(list) > maxRecentPaths {
+		list = list[:maxRecentPaths]
+	}
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(recentPathsFile(), data, 0644)
+}
+
+// samePath compares two Windows paths case-insensitively, ignoring separator style
+// and any trailing slash (but keeping the one that belongs to a drive root).
+func samePath(a, b string) bool {
+	norm := func(v string) string {
+		v = strings.ReplaceAll(strings.TrimSpace(v), "/", string(os.PathSeparator))
+		if len(v) > 3 {
+			v = strings.TrimRight(v, string(os.PathSeparator))
+		}
+		return strings.ToLower(v)
+	}
+	return norm(a) == norm(b)
+}
+
+// SaveRecentPath records a directory visit, moving it to the top of the list.
+func (a *App) SaveRecentPath(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		return
+	}
+
+	recentMu.Lock()
+	defer recentMu.Unlock()
+
+	kept := []RecentPath{{
+		Path:     path,
+		Name:     filepath.Base(path),
+		LastUsed: time.Now().Unix(),
+	}}
+	for _, r := range readRecentPaths() {
+		if !samePath(r.Path, path) {
+			kept = append(kept, r)
+		}
+	}
+	writeRecentPaths(kept)
+}
+
+// LoadRecentPaths returns recent directories, newest first, dropping any that have
+// been deleted or renamed since they were recorded.
+func (a *App) LoadRecentPaths() []RecentPath {
+	recentMu.Lock()
+	defer recentMu.Unlock()
+
+	stored := readRecentPaths()
+	alive := make([]RecentPath, 0, len(stored))
+	for _, r := range stored {
+		if info, err := os.Stat(r.Path); err == nil && info.IsDir() {
+			if r.Name == "" {
+				r.Name = filepath.Base(r.Path)
+			}
+			alive = append(alive, r)
+		}
+	}
+	if len(alive) != len(stored) {
+		writeRecentPaths(alive)
+	}
+	return alive
+}
+
+// RemoveRecentPath drops a single entry and returns the remaining list.
+func (a *App) RemoveRecentPath(path string) []RecentPath {
+	recentMu.Lock()
+	kept := []RecentPath{}
+	for _, r := range readRecentPaths() {
+		if !samePath(r.Path, path) {
+			kept = append(kept, r)
+		}
+	}
+	writeRecentPaths(kept)
+	recentMu.Unlock()
+
+	return a.LoadRecentPaths()
+}
+
+// ClearRecentPaths empties the recent-paths list.
+func (a *App) ClearRecentPaths() {
+	recentMu.Lock()
+	defer recentMu.Unlock()
+	writeRecentPaths([]RecentPath{})
 }
 
 // ---------- AUTOCOMPLETE ----------

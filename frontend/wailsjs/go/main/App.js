@@ -6,6 +6,10 @@ export function ClearCommandHistory() {
   return window['go']['main']['App']['ClearCommandHistory']();
 }
 
+export function ClearRecentPaths() {
+  return window['go']['main']['App']['ClearRecentPaths']();
+}
+
 export function CloseTerminal(arg1) {
   return window['go']['main']['App']['CloseTerminal'](arg1);
 }
@@ -38,12 +42,24 @@ export function LoadCommandHistory() {
   return window['go']['main']['App']['LoadCommandHistory']();
 }
 
+export function LoadRecentPaths() {
+  return window['go']['main']['App']['LoadRecentPaths']();
+}
+
 export function LoadSettings() {
   return window['go']['main']['App']['LoadSettings']();
 }
 
 export function OpenFileInEditor(arg1) {
   return window['go']['main']['App']['OpenFileInEditor'](arg1);
+}
+
+export function PasteToTerminal(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PasteToTerminal'](arg1, arg2, arg3);
+}
+
+export function RemoveRecentPath(arg1) {
+  return window['go']['main']['App']['RemoveRecentPath'](arg1);
 }
 
 export function RenameFile(arg1, arg2) {
@@ -60,6 +76,10 @@ export function RestartTerminal(arg1) {
 
 export function SaveCommandHistory(arg1) {
   return window['go']['main']['App']['SaveCommandHistory'](arg1);
+}
+
+export function SaveRecentPath(arg1) {
+  return window['go']['main']['App']['SaveRecentPath'](arg1);
 }
 
 export function SaveSettings(arg1) {

@@ -36,6 +36,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class RecentPath {
+	    path: string;
+	    name: string;
+	    lastUsed: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RecentPath(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.name = source["name"];
+	        this.lastUsed = source["lastUsed"];
+	    }
+	}
 	export class Settings {
 	    fontSize: number;
 	    theme: string;

@@ -72,11 +72,15 @@ Termi/
 │   │   ├── TreeNode.svelte    # Recursive file tree with auto-expand
 │   │   ├── SearchBar.svelte   # Terminal search overlay (Ctrl+F)
 │   │   ├── HistoryPanel.svelte    # Command history panel (Ctrl+K)
+│   │   ├── RecentPaths.svelte     # Recent folders panel (Ctrl+Shift+R)
+│   │   ├── ShortcutsPanel.svelte  # Keyboard shortcut list (F1)
+│   │   ├── SettingsPanel.svelte   # Font, theme and shell settings (Ctrl+,)
 │   │   ├── ContextMenu.svelte # Reusable right-click context menu
 │   │   ├── Toast.svelte       # Notification toast for long commands
 │   │   ├── Autocomplete.svelte    # Command bar auto-complete dropdown
 │   │   ├── stores.js          # Svelte writable stores (shared state)
-│   │   ├── shortcuts.js       # Global keyboard shortcut handler
+│   │   ├── shortcuts.js       # Shortcut table + global key handler
+│   │   ├── ptyWriter.js       # Ordered, chunked PTY input queue per tab
 │   │   ├── style.css          # Global styles, dark theme, CSS variables
 │   │   └── main.js            # Svelte app bootstrap
 │   │

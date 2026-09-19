@@ -1,5 +1,6 @@
 <script>
 import { onMount, tick } from "svelte";
+    import { get } from "svelte/store";
     import { Terminal } from "xterm";
     import { FitAddon } from "xterm-addon-fit";
     import { SearchAddon } from "xterm-addon-search";
@@ -8,13 +9,15 @@ import { onMount, tick } from "svelte";
         StartTerminal,
         CloseTerminal,
         RestartTerminal,
-        WriteToTerminal,
         ResizeTerminal,
         ListDirectory,
         GetWorkingDir,
         SaveCommandHistory,
         LoadCommandHistory,
         CreateDirectory,
+        SaveRecentPath,
+        LoadRecentPaths,
+        LoadSettings,
     } from "../wailsjs/go/main/App.js";
     import {
         EventsOn,
@@ -25,13 +28,28 @@ import { onMount, tick } from "svelte";
     import {
         historyOpen,
         searchOpen,
+        recentOpen,
+        shortcutsOpen,
+        settingsOpen,
+        settingsStore,
         commandHistory,
+        recentPaths,
     } from "./stores.js";
     import { registerShortcuts } from "./shortcuts.js";
+    import {
+        writeToTab,
+        pasteToTab,
+        runInTab,
+        disposeTabQueue,
+        onWriteError,
+    } from "./ptyWriter.js";
 
     import TreeNode from "./TreeNode.svelte";
     import SearchBar from "./SearchBar.svelte";
     import HistoryPanel from "./HistoryPanel.svelte";
+    import RecentPaths from "./RecentPaths.svelte";
+    import ShortcutsPanel from "./ShortcutsPanel.svelte";
+    import SettingsPanel from "./SettingsPanel.svelte";
     import ContextMenu from "./ContextMenu.svelte";
     import Toast from "./Toast.svelte";
     import Autocomplete from "./Autocomplete.svelte";
@@ -40,6 +58,12 @@ import { onMount, tick } from "svelte";
     let tabs = [];
     let activeTabId = null;
     let tabCounter = 1;
+    let tabKeyCounter = 1;
+
+    // Sessions we are closing or restarting deliberately. Closing a PTY makes the
+    // backend emit terminal-closed, and that handler must not treat our own
+    // teardown as the shell having exited on its own.
+    const intentionalTeardown = new Set();
     let explorerVisible = true;
     let searchAddon; // We might need one per tab, or just use active tab's addon
     let toastRef;
@@ -87,24 +111,46 @@ import { onMount, tick } from "svelte";
           )
         : cwdEntries;
 
-    // Xterm theme
-    const termTheme = {
-        background: "#1a1a2e",
-        foreground: "#e0e0e0",
-        cursor: "#00d4ff",
-        selectionBackground: "#264f78",
-        black: "#1a1a2e",
-        brightBlack: "#444",
-        red: "#f07178",
-        green: "#c3e88d",
-        yellow: "#ffcb6b",
-        blue: "#82aaff",
-        magenta: "#c792ea",
-        cyan: "#89ddff",
-        white: "#e0e0e0",
+    // Xterm themes, paired with the app palettes in style.css
+    const termThemes = {
+        dark: {
+            background: "#1a1a2e",
+            foreground: "#e0e0e0",
+            cursor: "#00d4ff",
+            selectionBackground: "#264f78",
+            black: "#1a1a2e",
+            brightBlack: "#444",
+            red: "#f07178",
+            green: "#c3e88d",
+            yellow: "#ffcb6b",
+            blue: "#82aaff",
+            magenta: "#c792ea",
+            cyan: "#89ddff",
+            white: "#e0e0e0",
+        },
+        light: {
+            background: "#ffffff",
+            foreground: "#1a1a2e",
+            cursor: "#0078d4",
+            selectionBackground: "#add6ff",
+            black: "#1a1a2e",
+            brightBlack: "#767676",
+            red: "#c72e0f",
+            green: "#107c10",
+            yellow: "#8e6a00",
+            blue: "#0451a5",
+            magenta: "#a31515",
+            cyan: "#0598bc",
+            white: "#f0f0f5",
+        },
     };
 
+    function terminalTheme(name) {
+        return termThemes[name] || termThemes.dark;
+    }
+
     async function loadExplorer(path) {
+        recordRecentPath(path);
         explorerLoading = true;
         try {
             cwdEntries = await ListDirectory(path);
@@ -113,6 +159,30 @@ import { onMount, tick } from "svelte";
         } finally {
             explorerLoading = false;
         }
+    }
+
+    // --- RECENT FOLDERS ---
+    // The Go side dedupes, caps the list and drops folders that no longer exist,
+    // so this is safe to call on every navigation. The guard only suppresses
+    // repeats of the folder we just recorded.
+    let lastRecordedPath = "";
+
+    function recordRecentPath(path) {
+        if (!path || path === lastRecordedPath) return;
+        lastRecordedPath = path;
+        SaveRecentPath(path);
+    }
+
+    // Open a recent folder in the explorer.
+    function openRecentPath(e) {
+        navigateExplorer(e.detail);
+    }
+
+    // cd the active terminal into a recent folder.
+    function cdToRecentPath(e) {
+        if (!activeTabId) return;
+        runInTab(activeTabId, 'cd "' + e.detail + '"', bracketedPaste(activeTabId));
+        tabs.find((t) => t.id === activeTabId)?.term.focus();
     }
 
     // New folder state
@@ -152,8 +222,8 @@ import { onMount, tick } from "svelte";
             const term = new Terminal({
                 cursorBlink: true,
                 fontFamily: 'Consolas, "Courier New", monospace',
-                fontSize: 14,
-                theme: termTheme,
+                fontSize: $settingsStore.fontSize,
+                theme: terminalTheme($settingsStore.theme),
             });
             const fitAddon = new FitAddon();
             const sa = new SearchAddon();
@@ -161,6 +231,10 @@ import { onMount, tick } from "svelte";
             term.loadAddon(sa);
 
             const newTab = {
+                // `key` identifies the tab in the UI for its whole life. `id` is the
+                // backend session, which changes when the shell restarts — keying the
+                // markup on it would tear down the div the terminal is attached to.
+                key: `tab-${tabKeyCounter++}`,
                 id: tabId,
                 name: `Terminal ${tabCounter++}`,
                 cwd: "",
@@ -171,20 +245,41 @@ import { onMount, tick } from "svelte";
             };
 
             tabs = [...tabs, newTab];
-            
+
+            // These read newTab.id rather than closing over tabId, so a restarted
+            // session keeps receiving this terminal's input.
             term.onData((data) => {
-                WriteToTerminal(tabId, data);
+                // Send verbatim. xterm has already normalized line endings and, if
+                // the foreground program turned on bracketed paste, added the paste
+                // markers itself — normalizing or bracketing again here would
+                // double-wrap it. The backend still chunks and orders the write, so
+                // a large paste arriving as one burst stays intact.
+                writeToTab(newTab.id, data);
             });
             term.onResize(({ cols, rows }) => {
-                ResizeTerminal(tabId, cols, rows);
+                ResizeTerminal(newTab.id, cols, rows);
             });
             
+            // Copy-on-select, but only once the selection has settled.
+            //
+            // onSelectionChange fires on every intermediate selection — every
+            // mouse-move of a drag, and programmatic selections too. Copying on
+            // each one replaced the clipboard many times per drag, so an
+            // accidental drag in the terminal would quietly overwrite whatever
+            // the user had copied and was about to paste. Waiting for the
+            // selection to stop changing means one copy per deliberate selection.
+            let selectionTimer;
+            let lastCopiedSelection = "";
             term.onSelectionChange(() => {
-                const sel = term.getSelection();
-                if (sel && sel.trim().length > 0) {
+                clearTimeout(selectionTimer);
+                selectionTimer = setTimeout(() => {
+                    const sel = term.getSelection();
+                    if (!sel || sel.trim().length === 0) return;
+                    if (sel === lastCopiedSelection) return;
+                    lastCopiedSelection = sel;
                     ClipboardSetText(sel);
                     if (toastRef) toastRef.showToast("Copied to clipboard!");
-                }
+                }, 250);
             });
             
             if (focus) {
@@ -234,8 +329,13 @@ import { onMount, tick } from "svelte";
 
     async function closeTab(tabId, e) {
         if(e) e.stopPropagation();
+        disposeTabQueue(tabId);
+        intentionalTeardown.add(tabId);
         await CloseTerminal(tabId);
         const idx = tabs.findIndex(t => t.id === tabId);
+        // The backend also emits terminal-closed, which may have got here first;
+        // both paths are guarded and Terminal.dispose() is idempotent.
+        tabs[idx]?.term.dispose();
         tabs = tabs.filter(t => t.id !== tabId);
         
         if (activeTabId === tabId) {
@@ -247,10 +347,132 @@ import { onMount, tick } from "svelte";
         }
     }
 
+    /**
+     * Whether the program in the foreground of a tab has turned on bracketed paste.
+     * PSReadLine and most REPL-aware tools set it; cmd.exe and plain console apps
+     * do not, and sending them the markers would print them as literal text.
+     */
+    function bracketedPaste(tabId) {
+        const tab = tabs.find((t) => t.id === tabId);
+        return Boolean(tab?.term?.modes?.bracketedPasteMode);
+    }
+
+    /** Paste the clipboard into the active terminal as one block. */
+    async function pasteFromClipboard() {
+        if (!activeTabId) return;
+        const text = await ClipboardGetText();
+        if (text) pasteToTab(activeTabId, text, bracketedPaste(activeTabId));
+    }
+
+    async function toggleExplorer() {
+        explorerVisible = !explorerVisible;
+        if (explorerVisible && cwd) loadExplorer(cwd);
+        await tick();
+        const tab = tabs.find((t) => t.id === activeTabId);
+        if (tab && tab.fitAddon) {
+            tab.fitAddon.fit();
+            ResizeTerminal(activeTabId, tab.term.cols, tab.term.rows);
+        }
+    }
+
+    // --- SETTINGS ---
+    /** Push the current preferences into the DOM and every open terminal. */
+    function applyAppearance(settings) {
+        document.documentElement.setAttribute("data-theme", settings.theme);
+        const theme = terminalTheme(settings.theme);
+        for (const tab of tabs) {
+            tab.term.options.fontSize = settings.fontSize;
+            tab.term.options.theme = theme;
+            if (tab.fitAddon && tab.id === activeTabId) {
+                tab.fitAddon.fit();
+                ResizeTerminal(tab.id, tab.term.cols, tab.term.rows);
+            }
+        }
+    }
+
+    /**
+     * Swap every tab onto a freshly started shell, keeping its position, its
+     * xterm instance and its directory. Only the backend session changes.
+     */
+    async function restartAllShells() {
+        for (const tab of tabs) {
+            const oldId = tab.id;
+            disposeTabQueue(oldId);
+            intentionalTeardown.add(oldId);
+            try {
+                const newId = await RestartTerminal(oldId);
+                tab.id = newId;
+                tab.term.reset();
+                if (activeTabId === oldId) activeTabId = newId;
+                ResizeTerminal(newId, tab.term.cols, tab.term.rows);
+            } catch (err) {
+                console.error("Failed to restart shell for tab", oldId, err);
+                if (toastRef) toastRef.showToast("Could not restart the shell");
+            }
+        }
+        tabs = tabs;
+        tabs.find((t) => t.id === activeTabId)?.term.focus();
+    }
+
+    async function handleSettingsApply(e) {
+        const { settings, shellChanged } = e.detail;
+        applyAppearance(settings);
+        if (shellChanged) {
+            if (toastRef) toastRef.showToast(`Restarting with ${settings.shell}…`);
+            await restartAllShells();
+        }
+    }
+
+    // --- TAB NAVIGATION ---
+    function switchTabByIndex(index) {
+        if (index >= 0 && index < tabs.length) switchTab(tabs[index].id);
+    }
+
+    function cycleTab(step) {
+        if (tabs.length < 2) return;
+        const idx = tabs.findIndex((t) => t.id === activeTabId);
+        if (idx === -1) return;
+        switchTabByIndex((idx + step + tabs.length) % tabs.length);
+    }
+
+    function closeActiveTab() {
+        if (activeTabId) closeTab(activeTabId);
+    }
+
+    /** Only one overlay panel at a time — opening one dismisses the others. */
+    function togglePanel(store) {
+        const wasOpen = get(store);
+        historyOpen.set(false);
+        recentOpen.set(false);
+        shortcutsOpen.set(false);
+        searchOpen.set(false);
+        store.set(!wasOpen);
+    }
+
     onMount(async () => {
+        // Preferences first — createNewTab reads font size and theme from the store.
+        try {
+            const settings = await LoadSettings();
+            if (settings) {
+                settingsStore.set(settings);
+                document.documentElement.setAttribute("data-theme", settings.theme);
+            }
+        } catch (err) {
+            console.error("Failed to load settings", err);
+        }
+
         // Load command history
         const hist = await LoadCommandHistory();
         commandHistory.set(hist || []);
+
+        // Load recent folders
+        const recents = await LoadRecentPaths();
+        recentPaths.set(recents || []);
+
+        // Surface PTY write failures instead of losing input silently
+        onWriteError((msg) => {
+            if (toastRef) toastRef.showToast(msg);
+        });
 
         window.addEventListener("resize", () => {
             const tab = tabs.find(t => t.id === activeTabId);
@@ -268,11 +490,44 @@ import { onMount, tick } from "svelte";
             }
         });
 
+        // The shell exited on its own (the user typed `exit`) — drop the dead tab
+        // rather than leaving it in the bar with a terminal nothing is attached to.
+        EventsOn("terminal-closed", (tabId) => {
+            if (intentionalTeardown.delete(tabId)) return;
+            const tab = tabs.find((t) => t.id === tabId);
+            if (!tab) return;
+            disposeTabQueue(tabId);
+            const idx = tabs.indexOf(tab);
+            tab.term.dispose();
+            tabs = tabs.filter((t) => t !== tab);
+            if (activeTabId === tabId) {
+                if (tabs.length > 0) {
+                    switchTab(tabs[Math.max(0, idx - 1)].id);
+                } else {
+                    createNewTab();
+                }
+            }
+        });
+
+        // A command that ran longer than the backend's threshold has finished.
+        EventsOn("command-complete", (elapsed) => {
+            if (!toastRef) return;
+            const seconds = Number(elapsed) || 0;
+            const pretty =
+                seconds >= 60
+                    ? `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
+                    : `${seconds.toFixed(1)}s`;
+            toastRef.showToast(`Command finished in ${pretty}`);
+        });
+
         // Listen for cwd changes detected by Go (terminal cd)
         EventsOn("cwd-change", async (payload) => {
             const tab = tabs.find(t => t.id === payload.tabId);
             if (tab) {
                 tab.cwd = payload.data;
+                // Track it even when the explorer is hidden or pinned — a folder the
+                // terminal cd'd into is exactly what the recent list is for.
+                recordRecentPath(payload.data);
                 // If it's the active tab, synchronize explorer
                 if (tab.id === activeTabId) {
                     if (pinned && cwd) return; // if pinned, UI ignores terminal cd
@@ -292,16 +547,10 @@ import { onMount, tick } from "svelte";
         });
 
         // --- KEYBOARD SHORTCUTS ---
+        // Every binding here is described in shortcuts.js and shown by F1.
         registerShortcuts({
             clearTerminal: () => {
-                if(activeTabId) WriteToTerminal(activeTabId, "cls\r");
-            },
-            hasSelection: () => {
-                const sel = tabs.find(t=>t.id===activeTabId)?.term.getSelection();
-                return sel && sel.length > 0;
-            },
-            clearSelection: () => {
-                tabs.find(t=>t.id===activeTabId)?.term.clearSelection();
+                if (activeTabId) runInTab(activeTabId, "cls", bracketedPaste(activeTabId));
             },
             copy: () => {
                 const sel = tabs.find(t=>t.id===activeTabId)?.term.getSelection();
@@ -310,12 +559,21 @@ import { onMount, tick } from "svelte";
                     if (toastRef) toastRef.showToast("Copied to clipboard!");
                 }
             },
-            paste: async () => {
-                const text = await ClipboardGetText();
-                if (text) if(activeTabId) WriteToTerminal(activeTabId, text);
+            paste: () => pasteFromClipboard(),
+            selectAllTerminal: () => {
+                tabs.find(t=>t.id===activeTabId)?.term.selectAll();
             },
-            toggleHistory: () => historyOpen.update((v) => !v),
-            toggleSearch: () => searchOpen.update((v) => !v),
+            newTab: () => createNewTab(),
+            closeTab: closeActiveTab,
+            nextTab: () => cycleTab(1),
+            prevTab: () => cycleTab(-1),
+            switchTab: switchTabByIndex,
+            toggleExplorer,
+            toggleHistory: () => togglePanel(historyOpen),
+            toggleRecent: () => togglePanel(recentOpen),
+            toggleSearch: () => togglePanel(searchOpen),
+            toggleShortcuts: () => togglePanel(shortcutsOpen),
+            toggleSettings: () => settingsOpen.update((v) => !v),
         });
 
         // Start initial Tab
@@ -326,7 +584,9 @@ import { onMount, tick } from "svelte";
     function runCommand() {
         const cmd = commandInput.trim();
         if (!cmd) return;
-        if(activeTabId) WriteToTerminal(activeTabId, cmd + "\r");
+        // The body goes as a paste and the Enter separately, so a long or
+        // multi-line command reaches the shell whole.
+        if (activeTabId) runInTab(activeTabId, cmd, bracketedPaste(activeTabId));
 
         // Save to history
         SaveCommandHistory(cmd);
@@ -335,13 +595,104 @@ import { onMount, tick } from "svelte";
             return [cmd, ...filtered];
         });
 
+        // Clearing the box is undoable — Ctrl+Z brings the command back.
+        pushUndo(currentCommandState(), false);
         commandInput = "";
         autocompleteVisible = false;
-        tabs.find(t=>t.id===activeTabId)?.tabs.find(t=>t.id===activeTabId)?.term.focus();
+        tabs.find((t) => t.id === activeTabId)?.term.focus();
+    }
+
+    // --- COMMAND BAR UNDO / REDO ---
+    // Svelte rewrites the textarea's value whenever commandInput changes (picking
+    // from history, accepting a suggestion, clearing after a run), and that wipes
+    // the browser's built-in undo stack. Keep our own so Ctrl+Z always works.
+    const UNDO_LIMIT = 100;
+    const UNDO_COALESCE_MS = 400;
+
+    let undoStack = [];
+    let redoStack = [];
+    let pendingUndoState = null;
+    let lastUndoPush = 0;
+
+    function currentCommandState() {
+        const caret = commandTextarea ? commandTextarea.selectionStart : commandInput.length;
+        const end = commandTextarea ? commandTextarea.selectionEnd : commandInput.length;
+        return { value: commandInput, start: caret, end };
+    }
+
+    /**
+     * Record the state from before an edit. `coalesce` folds a run of typing into
+     * one undo step; programmatic changes pass false so they get a step of their own.
+     */
+    function pushUndo(state, coalesce = true) {
+        const top = undoStack[undoStack.length - 1];
+        if (top && top.value === state.value) return;
+
+        const now = Date.now();
+        if (coalesce && top && now - lastUndoPush < UNDO_COALESCE_MS) {
+            lastUndoPush = now;
+            return;
+        }
+        lastUndoPush = now;
+        undoStack = [...undoStack.slice(-(UNDO_LIMIT - 1)), state];
+        redoStack = [];
+    }
+
+    async function applyCommandState(state) {
+        commandInput = state.value;
+        autocompleteVisible = false;
+        await tick();
+        if (commandTextarea) {
+            commandTextarea.focus();
+            commandTextarea.setSelectionRange(state.start, state.end);
+        }
+    }
+
+    async function undoCommandEdit() {
+        if (undoStack.length === 0) return;
+        const previous = undoStack[undoStack.length - 1];
+        undoStack = undoStack.slice(0, -1);
+        redoStack = [...redoStack, currentCommandState()];
+        lastUndoPush = 0;
+        await applyCommandState(previous);
+    }
+
+    async function redoCommandEdit() {
+        if (redoStack.length === 0) return;
+        const next = redoStack[redoStack.length - 1];
+        redoStack = redoStack.slice(0, -1);
+        undoStack = [...undoStack, currentCommandState()];
+        lastUndoPush = 0;
+        await applyCommandState(next);
+    }
+
+    // beforeinput fires while commandInput still holds the pre-edit value.
+    function captureCommandEdit() {
+        pendingUndoState = currentCommandState();
+    }
+
+    function commitCommandEdit() {
+        if (!pendingUndoState) return;
+        pushUndo(pendingUndoState, true);
+        pendingUndoState = null;
     }
 
     function handleKeydown(e) {
-        // Let autocomplete handle navigation keys first
+        const ctrl = e.ctrlKey || e.metaKey;
+        const key = (e.key || "").toLowerCase();
+
+        if (ctrl && key === "z" && !e.shiftKey) {
+            e.preventDefault();
+            undoCommandEdit();
+            return;
+        }
+        if (ctrl && ((key === "z" && e.shiftKey) || (key === "y" && !e.shiftKey))) {
+            e.preventDefault();
+            redoCommandEdit();
+            return;
+        }
+
+        // Let autocomplete handle navigation keys next
         if (autocompleteRef && autocompleteRef.handleKeydown(e)) {
             return;
         }
@@ -352,6 +703,7 @@ import { onMount, tick } from "svelte";
     }
 
     function handleAutocompleteSelect(e) {
+        pushUndo(currentCommandState(), false);
         commandInput = e.detail;
         autocompleteVisible = false;
         if (commandTextarea) commandTextarea.focus();
@@ -391,7 +743,7 @@ import { onMount, tick } from "svelte";
         // Only cd in terminal when NOT pinned
         if (!pinned) {
             navUserAction = true;
-            if(activeTabId) WriteToTerminal(activeTabId, 'cd "' + newPath + '"\r');
+            if (activeTabId) runInTab(activeTabId, 'cd "' + newPath + '"', bracketedPaste(activeTabId));
         }
 
         await loadExplorer(newPath);
@@ -413,7 +765,7 @@ import { onMount, tick } from "svelte";
 
         if (!pinned) {
             navUserAction = true;
-            if(activeTabId) WriteToTerminal(activeTabId, 'cd "' + prev + '"\r');
+            if (activeTabId) runInTab(activeTabId, 'cd "' + prev + '"', bracketedPaste(activeTabId));
         }
 
         loadExplorer(prev);
@@ -434,7 +786,7 @@ import { onMount, tick } from "svelte";
 
         if (!pinned) {
             navUserAction = true;
-            if(activeTabId) WriteToTerminal(activeTabId, 'cd "' + next + '"\r');
+            if (activeTabId) runInTab(activeTabId, 'cd "' + next + '"', bracketedPaste(activeTabId));
         }
 
         loadExplorer(next);
@@ -561,10 +913,7 @@ import { onMount, tick } from "svelte";
             {
                 label: "Paste",
                 shortcut: "Ctrl+Shift+V",
-                action: async () => {
-                    const text = await ClipboardGetText();
-                    if (text) if(activeTabId) WriteToTerminal(activeTabId, text);
-                },
+                action: pasteFromClipboard,
             },
             { divider: true },
             {
@@ -574,7 +923,9 @@ import { onMount, tick } from "svelte";
             {
                 label: "Clear Terminal",
                 shortcut: "Ctrl+L",
-                action: () => WriteToTerminal("cls\r"),
+                action: () => {
+                    if (activeTabId) runInTab(activeTabId, "cls", bracketedPaste(activeTabId));
+                },
             },
         ];
         ctxMenuVisible = true;
@@ -591,7 +942,7 @@ import { onMount, tick } from "svelte";
                 {
                     label: "Open in Terminal",
                     action: () => {
-                        if(activeTabId) WriteToTerminal(activeTabId, 'cd "' + entry.path + '"\r');
+                        if (activeTabId) runInTab(activeTabId, 'cd "' + entry.path + '"', bracketedPaste(activeTabId));
                     }
                 },
                 {
@@ -626,7 +977,7 @@ import { onMount, tick } from "svelte";
                             .split("\\")
                             .slice(0, -1)
                             .join("\\");
-                        if(activeTabId) WriteToTerminal(activeTabId, 'cd "' + dir + '"\r');
+                        if (activeTabId) runInTab(activeTabId, 'cd "' + dir + '"', bracketedPaste(activeTabId));
                     },
                 },
                 {
@@ -705,13 +1056,15 @@ import { onMount, tick } from "svelte";
         dragOver = false;
         const path = e.dataTransfer.getData("text/plain");
         if (path) {
-            if(activeTabId) WriteToTerminal(activeTabId, '"' + path + '"');
+            if (activeTabId)
+                pasteToTab(activeTabId, '"' + path + '"', bracketedPaste(activeTabId));
             tabs.find(t=>t.id===activeTabId)?.term.focus();
         }
     }
 
     // --- HISTORY SELECT ---
     function handleHistorySelect(e) {
+        pushUndo(currentCommandState(), false);
         commandInput = e.detail;
         historyOpen.set(false);
         if (commandTextarea) commandTextarea.focus();
@@ -733,9 +1086,12 @@ import { onMount, tick } from "svelte";
         <!-- History panel overlay -->
         <HistoryPanel on:select={handleHistorySelect} />
 
+        <!-- Recent folders overlay -->
+        <RecentPaths on:open={openRecentPath} on:cd={cdToRecentPath} />
+
         <!-- TABS BAR -->
         <div class="tabs-bar">
-            {#each tabs as t (t.id)}
+            {#each tabs as t (t.key)}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
                 <!-- svelte-ignore a11y-no-static-element-interactions -->
                 <div class="tab" class:active={t.id === activeTabId} on:click={() => switchTab(t.id)}>
@@ -743,10 +1099,54 @@ import { onMount, tick } from "svelte";
                     <button class="tab-close" on:click={(e) => closeTab(t.id, e)}>✕</button>
                 </div>
             {/each}
-            <button class="tab-new" on:click={() => createNewTab()}>+</button>
+            <button class="tab-new" on:click={() => createNewTab()} title="New tab (Ctrl+Shift+T)">+</button>
             <div class="tab-spacer"></div>
+
+            <!-- Recent folders -->
+            <button
+                class="sidebar-toggle"
+                class:active={$recentOpen}
+                on:click={() => togglePanel(recentOpen)}
+                title="Recent folders (Ctrl+Shift+R)"
+            >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <polyline points="12 7 12 12 15.5 14"></polyline>
+                </svg>
+            </button>
+
+            <!-- Keyboard shortcuts -->
+            <button
+                class="sidebar-toggle"
+                class:active={$shortcutsOpen}
+                on:click={() => togglePanel(shortcutsOpen)}
+                title="Keyboard shortcuts (F1)"
+            >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="6" width="20" height="13" rx="2" ry="2"></rect>
+                    <line x1="6" y1="10" x2="6" y2="10"></line>
+                    <line x1="10" y1="10" x2="10" y2="10"></line>
+                    <line x1="14" y1="10" x2="14" y2="10"></line>
+                    <line x1="18" y1="10" x2="18" y2="10"></line>
+                    <line x1="7.5" y1="15" x2="16.5" y2="15"></line>
+                </svg>
+            </button>
+
+            <!-- Settings -->
+            <button
+                class="sidebar-toggle"
+                class:active={$settingsOpen}
+                on:click={() => settingsOpen.update((v) => !v)}
+                title="Settings (Ctrl+,)"
+            >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+            </button>
+
             <!-- Explorer Toggle Button -->
-            <button class="sidebar-toggle" class:active={explorerVisible} on:click={() => explorerVisible = !explorerVisible} title="Toggle Explorer">
+            <button class="sidebar-toggle" class:active={explorerVisible} on:click={toggleExplorer} title="Toggle Explorer (Ctrl+Shift+E)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                     <line x1="15" y1="3" x2="15" y2="21"></line>
@@ -756,7 +1156,7 @@ import { onMount, tick } from "svelte";
 
         <!-- TERMINAL CONTAINERS -->
         <div class="terminals-container">
-            {#each tabs as t (t.id)}
+            {#each tabs as t (t.key)}
                 <!-- svelte-ignore a11y-no-static-element-interactions -->
                 <div 
                     class="terminal-instance" 
@@ -782,7 +1182,9 @@ import { onMount, tick } from "svelte";
                 bind:this={commandTextarea}
                 bind:value={commandInput}
                 on:keydown={handleKeydown}
-                placeholder="Type a command and press Enter..."
+                on:beforeinput={captureCommandEdit}
+                on:input={commitCommandEdit}
+                placeholder="Type a command and press Enter…  (F1 for shortcuts)"
                 autocomplete="off"
                 spellcheck="false"
             ></textarea>
@@ -813,6 +1215,17 @@ import { onMount, tick } from "svelte";
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                     <path d="M1 4V13C1 13.55 1.45 14 2 14H14C14.55 14 15 13.55 15 13V6C15 5.45 14.55 5 14 5H8L6.5 3H2C1.45 3 1 3.45 1 4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
                     <path d="M8 8V12M6 10H10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+            </button>
+
+            <button
+                class="nav-btn nav-btn-icon"
+                on:click={() => togglePanel(recentOpen)}
+                title="Recent folders (Ctrl+Shift+R)"
+            >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M8 4.5V8L10.2 9.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
             </button>
 
@@ -980,4 +1393,6 @@ import { onMount, tick } from "svelte";
     y={ctxMenuY}
     items={ctxMenuItems}
 />
+<ShortcutsPanel />
+<SettingsPanel on:apply={handleSettingsApply} />
 <Toast bind:this={toastRef} />
