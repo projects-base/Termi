@@ -62,14 +62,14 @@ If you want to distribute Termi to others with an official `.exe` Windows Instal
 This script will:
 - Read your exact version configuration from `wails.json`.
 - Spin up the Wails NSIS installer-compiler.
-- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v1.0.0.exe` and `Termi-v1.0.0-setup.exe`).
+- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v5.0.0.exe` and `Termi-v5.0.0-setup.exe`).
 
 ### Windows SmartScreen ("Safe to Run")
-Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v1.0.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
+Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v5.0.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
 
 Once you purchase a certificate, you can securely sign the installer using the Windows SDK:
 ```powershell
-signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v1.0.0-setup.exe
+signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v5.0.0-setup.exe
 ```
 
 ### Building Installers on GitHub Actions
@@ -87,12 +87,14 @@ your machine cannot drift apart.
 To cut a release:
 
 1. Bump `info.productVersion` in `wails.json`, then commit.
-2. Tag and push: `git tag v3.0.0 && git push --tags`
+2. Tag and push: `git tag v5.0 && git push --tags`
 3. The workflow builds and publishes the release with auto-generated notes.
 
-The installer filename is derived from `wails.json`, **not** from the tag, so bump
-the version before tagging or you will publish a `v3.1.0` release containing
-`Termi-v3.0.0-setup.exe`.
+The installer filename is derived from `wails.json`, **not** from the tag, so the
+workflow checks the two agree before publishing and fails the run if they do not.
+Tags are compared on a zero-padded normal form, so the two-part `v5.0` used in this
+repo matches a `productVersion` of `5.0.0`; tagging `v5.1` against `5.0.0` stops the
+release instead of shipping a mislabeled installer.
 
 To build without tagging, open the **Actions** tab, pick **Build Installer**, and
 use **Run workflow** — the installer lands under the run's **Artifacts**.

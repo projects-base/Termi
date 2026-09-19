@@ -55,6 +55,27 @@ jobs:
           $version = (Get-Content -Raw wails.json | ConvertFrom-Json).info.productVersion
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # Tags are written two-part (v5.0) while wails.json is three-part
+      # (5.0.0), so compare on a zero-padded normal form rather than literally.
+      - name: Verify tag matches wails.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          function Normalize($v) {
+            $parts = @($v.TrimStart('v').Split('.'))
+            while ($parts.Count -lt 3) { $parts += '0' }
+            return ($parts[0..2] -join '.')
+          }
+          $tag = Normalize $env:TAG
+          $ver = Normalize $env:VERSION
+          if ($tag -ne $ver) {
+            Write-Host "::error::Tag $env:TAG ($tag) does not match wails.json productVersion $env:VERSION ($ver). Bump wails.json before tagging."
+            exit 1
+          }
+          Write-Host "Tag $env:TAG matches wails.json version $env:VERSION."
+
       - uses: actions/upload-artifact@v4
         with:
           name: Termi-v${{ steps.meta.outputs.version }}-windows-amd64
