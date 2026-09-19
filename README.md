@@ -7,6 +7,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/projects-base/Termi/actions/workflows/build-installer.yml"><img src="https://github.com/projects-base/Termi/actions/workflows/build-installer.yml/badge.svg" alt="Build Installer" /></a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/go-1.23-00ADD8?style=flat-square&logo=go" alt="Go" />
   <img src="https://img.shields.io/badge/svelte-3.49-FF3E00?style=flat-square&logo=svelte" alt="Svelte" />
@@ -22,7 +26,7 @@ Termi replaces the classic Windows Command Prompt with a sleek, modern interface
 
 ### Option 1: Download the .exe (no install needed)
 
-1. Go to the [Releases](https://github.com/yourusername/termi/releases) page
+1. Go to the [Releases](https://github.com/projects-base/Termi/releases) page
 2. Download `termi.exe` from the latest release
 3. Double-click to run — that's it
 
@@ -39,8 +43,8 @@ Requires Go 1.23+, Node.js 18+, and Wails CLI 2+.
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
 # Clone and build
-git clone https://github.com/yourusername/termi.git
-cd termi
+git clone https://github.com/projects-base/Termi.git
+cd Termi
 wails build
 ```
 
@@ -68,10 +72,30 @@ Once you purchase a certificate, you can securely sign the installer using the W
 signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v1.0.0-setup.exe
 ```
 
-To easily distribute via GitHub:
-1. Tag your version: `git tag v1.0.0 && git push --tags`
-2. Go to your repo > Releases > Draft a new release
-3. Upload `build/bin/Termi-v1.0.0-setup.exe` and publish.
+### Building Installers on GitHub Actions
+
+You do not have to build locally. [`.github/workflows/build-installer.yml`](.github/workflows/build-installer.yml)
+runs the same `build_release.ps1` pipeline on a `windows-latest` runner, so CI and
+your machine cannot drift apart.
+
+| Trigger | What happens |
+|---|---|
+| Push or PR to `master` | Builds the app and installer, uploads them as a workflow artifact (kept 30 days) |
+| Push a `v*` tag | Builds, then publishes a GitHub release with both `.exe` files attached |
+| **Run workflow** button | Same as a `master` push, on demand |
+
+To cut a release:
+
+1. Bump `info.productVersion` in `wails.json`, then commit.
+2. Tag and push: `git tag v3.0.0 && git push --tags`
+3. The workflow builds and publishes the release with auto-generated notes.
+
+The installer filename is derived from `wails.json`, **not** from the tag, so bump
+the version before tagging or you will publish a `v3.1.0` release containing
+`Termi-v3.0.0-setup.exe`.
+
+To build without tagging, open the **Actions** tab, pick **Build Installer**, and
+use **Run workflow** — the installer lands under the run's **Artifacts**.
 
 ### Development
 
@@ -237,11 +261,15 @@ Press **F1** in the app for this list, searchable and always up to date.
 | **Shift+Enter** | New line in command bar / Previous search match |
 | **Escape** | Close the open panel |
 | **Tab** | Accept auto-complete suggestion |
+| **Up** / **Down** | Move through auto-complete suggestions |
 
 ## Project Structure
 
 ```
 termi/
+├── .github/workflows/
+│   └── build-installer.yml  # CI: builds the NSIS installer, publishes releases
+├── build_release.ps1    # Local + CI installer build pipeline
 ├── main.go              # App entry point, Wails window config
 ├── app.go               # Backend: PTY, file ops, history, completions
 ├── frontend/src/
