@@ -1,0 +1,89 @@
+name: Build Installer
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Ensure NSIS is available
+        run: |
+          if (Get-Command makensis -ErrorAction SilentlyContinue) {
+            Write-Host "makensis already on PATH."
+          } elseif (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
+            "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          } else {
+            choco install nsis --no-progress -y
+            "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+
+      - name: Build app and NSIS installer
+        run: .\build_release.ps1
+
+      # build_release.ps1 names its output from wails.json, so read the same
+      # source here rather than re-deriving the version from the tag.
+      - name: Read product version
+        id: meta
+        run: |
+          $version = (Get-Content -Raw wails.json | ConvertFrom-Json).info.productVersion
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Termi-v${{ steps.meta.outputs.version }}-windows-amd64
+          path: |
+            build/bin/Termi-v${{ steps.meta.outputs.version }}-setup.exe
+            build/bin/Termi-v${{ steps.meta.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.exe \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Termi $TAG" \
+            --generate-notes

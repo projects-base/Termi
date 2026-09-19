@@ -38,6 +38,10 @@ Write-Host "Building $appName v$version with NSIS Output..." -ForegroundColor Cy
 
 # 2. Trigger natively packaged Wails NSIS build
 wails build -nsis
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Error: 'wails build -nsis' failed with exit code $LASTEXITCODE." -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 
 $binDir = "build\bin"
 $baseExe = "$binDir\${appName}.exe"
@@ -48,13 +52,16 @@ $newInstallerExe = "$binDir\${appName}-v${version}-setup.exe"
 
 # 3. Rename binaries gracefully to include the version
 if (Test-Path $baseExe) {
-    Rename-Item -Path $baseExe -NewName (Split-Path $newBaseExe -Leaf) -Force
-    Write-Host "✓ Renamed App: $(Split-Path $newBaseExe -Leaf)" -ForegroundColor Green
+    Move-Item -Path $baseExe -Destination $newBaseExe -Force
+    Write-Host "[OK] Renamed App: $(Split-Path $newBaseExe -Leaf)" -ForegroundColor Green
 }
 
 if (Test-Path $installerExe) {
-    Rename-Item -Path $installerExe -NewName (Split-Path $newInstallerExe -Leaf) -Force
-    Write-Host "✓ Renamed Installer: $(Split-Path $newInstallerExe -Leaf)" -ForegroundColor Green
+    Move-Item -Path $installerExe -Destination $newInstallerExe -Force
+    Write-Host "[OK] Renamed Installer: $(Split-Path $newInstallerExe -Leaf)" -ForegroundColor Green
+} else {
+    Write-Host "Error: expected installer not found at $installerExe." -ForegroundColor Red
+    exit 1
 }
 
 # 4. Warn about SmartScreen
