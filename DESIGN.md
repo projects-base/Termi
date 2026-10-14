@@ -62,6 +62,7 @@ Termi is a desktop terminal application for Windows that combines native shell a
 Termi/
 ├── main.go                    # Wails app initialization, window config
 ├── app.go                     # Core backend: PTY, file ops, history, completions
+├── version.go                 # Embedded version info + GitHub update check
 ├── go.mod / go.sum            # Go dependencies
 ├── wails.json                 # Wails build configuration & app versioning
 ├── build_release.ps1          # Automated NSIS compiler & code signing pipeline

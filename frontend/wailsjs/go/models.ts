@@ -1,5 +1,23 @@
 export namespace main {
 	
+	export class AppInfo {
+	    version: string;
+	    productName: string;
+	    companyName: string;
+	    copyright: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.productName = source["productName"];
+	        this.companyName = source["companyName"];
+	        this.copyright = source["copyright"];
+	    }
+	}
 	export class FileEntry {
 	    name: string;
 	    path: string;
@@ -56,6 +74,7 @@ export namespace main {
 	    fontSize: number;
 	    theme: string;
 	    shell: string;
+	    startupDir: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -66,6 +85,29 @@ export namespace main {
 	        this.fontSize = source["fontSize"];
 	        this.theme = source["theme"];
 	        this.shell = source["shell"];
+	        this.startupDir = source["startupDir"];
+	    }
+	}
+	export class UpdateCheck {
+	    currentVersion: string;
+	    latestVersion: string;
+	    available: boolean;
+	    releaseURL: string;
+	    publishedAt: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateCheck(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.currentVersion = source["currentVersion"];
+	        this.latestVersion = source["latestVersion"];
+	        this.available = source["available"];
+	        this.releaseURL = source["releaseURL"];
+	        this.publishedAt = source["publishedAt"];
+	        this.error = source["error"];
 	    }
 	}
 

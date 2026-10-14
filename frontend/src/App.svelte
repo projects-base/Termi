@@ -18,6 +18,8 @@ import { onMount, tick } from "svelte";
         SaveRecentPath,
         LoadRecentPaths,
         LoadSettings,
+        GetAppInfo,
+        CheckForUpdate,
     } from "../wailsjs/go/main/App.js";
     import {
         EventsOn,
@@ -32,6 +34,7 @@ import { onMount, tick } from "svelte";
         shortcutsOpen,
         settingsOpen,
         settingsStore,
+        appInfo,
         commandHistory,
         recentPaths,
     } from "./stores.js";
@@ -460,6 +463,30 @@ import { onMount, tick } from "svelte";
         } catch (err) {
             console.error("Failed to load settings", err);
         }
+
+        // Version for the title bar and the Settings About section.
+        try {
+            const info = await GetAppInfo();
+            if (info) appInfo.set(info);
+        } catch (err) {
+            console.error("Failed to read app info", err);
+        }
+
+        // Look for a newer release once, a few seconds in so it never delays
+        // startup. Stays silent unless there is actually an update — being
+        // offline or rate limited is not worth a toast.
+        setTimeout(async () => {
+            try {
+                const result = await CheckForUpdate();
+                if (result && result.available && toastRef) {
+                    toastRef.showToast(
+                        `Termi ${result.latestVersion} is available — see Settings (Ctrl+,)`,
+                    );
+                }
+            } catch (err) {
+                console.error("Update check failed", err);
+            }
+        }, 4000);
 
         // Load command history
         const hist = await LoadCommandHistory();

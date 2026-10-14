@@ -18,4 +18,13 @@ export const settingsStore = writable({
     fontSize: 14,
     theme: "dark",
     shell: "PowerShell",
+    startupDir: "",
+});
+
+// This build's name, version and copyright, read from the embedded wails.json
+export const appInfo = writable({
+    version: "",
+    productName: "Termi",
+    companyName: "",
+    copyright: "",
 });

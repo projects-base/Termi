@@ -11,9 +11,65 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # One run per ref. A tag run publishes a release, so it must never be
+  # cancelled part-way through by a later push.
+  group: installer-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
 jobs:
+  # Cheap pre-flight. Catching a tag/version mismatch here costs seconds,
+  # whereas the same check after the build wastes a full Windows build.
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tags here are written two-part (v5.0) while wails.json is three-part
+      # (5.0.0), so compare a zero-padded normal form rather than literally.
+      # A tag may also carry a prerelease suffix (v5.1-beta1).
+      - name: Read product version and verify the tag
+        id: meta
+        env:
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          normalize() {
+            local v="${1#v}"   # drop a leading "v"
+            v="${v%%-*}"       # drop any prerelease suffix
+            local a b c
+            IFS='.' read -r a b c <<< "$v"
+            printf '%s.%s.%s' "${a:-0}" "${b:-0}" "${c:-0}"
+          }
+
+          version="$(jq -r '.info.productVersion' wails.json)"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::wails.json has no info.productVersion"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "wails.json productVersion: $version"
+
+          prerelease=false
+          if [ "$IS_TAG" = "true" ]; then
+            if [ "$(normalize "$TAG")" != "$(normalize "$version")" ]; then
+              echo "::error::Tag $TAG ($(normalize "$TAG")) does not match wails.json productVersion $version ($(normalize "$version")). Bump wails.json before tagging."
+              exit 1
+            fi
+            case "$TAG" in *-*) prerelease=true ;; esac
+            echo "Tag $TAG matches wails.json version $version (prerelease=$prerelease)."
+          fi
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
   build:
     name: Windows installer
+    needs: check
     runs-on: windows-latest
 
     steps:
@@ -30,8 +86,20 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # Pin the CLI to the same Wails the module builds against. The CLI
+      # regenerates build/windows/installer/wails_tools.nsh on every -nsis
+      # build, so a mismatched CLI would quietly change the installer.
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+        run: |
+          $match = Select-String -Path go.mod -Pattern '^\s+github\.com/wailsapp/wails/v2\s+(v\S+)' |
+                   Select-Object -First 1
+          if (-not $match) {
+            Write-Host "::error::Could not find the Wails version in go.mod"
+            exit 1
+          }
+          $version = $match.Matches[0].Groups[1].Value
+          Write-Host "Installing Wails CLI $version (from go.mod)"
+          go install "github.com/wailsapp/wails/v2/cmd/wails@$version"
 
       - name: Ensure NSIS is available
         run: |
@@ -44,50 +112,36 @@ jobs:
             "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           }
 
+      - name: Run tests
+        run: go test ./...
+
       - name: Build app and NSIS installer
         run: .\build_release.ps1
 
-      # build_release.ps1 names its output from wails.json, so read the same
-      # source here rather than re-deriving the version from the tag.
-      - name: Read product version
-        id: meta
+      # Termi is not code-signed, so publish hashes people can check against
+      # what they downloaded.
+      - name: Generate checksums
+        working-directory: build/bin
         run: |
-          $version = (Get-Content -Raw wails.json | ConvertFrom-Json).info.productVersion
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
-      # Tags are written two-part (v5.0) while wails.json is three-part
-      # (5.0.0), so compare on a zero-padded normal form rather than literally.
-      - name: Verify tag matches wails.json version
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          TAG: ${{ github.ref_name }}
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          function Normalize($v) {
-            $parts = @($v.TrimStart('v').Split('.'))
-            while ($parts.Count -lt 3) { $parts += '0' }
-            return ($parts[0..2] -join '.')
-          }
-          $tag = Normalize $env:TAG
-          $ver = Normalize $env:VERSION
-          if ($tag -ne $ver) {
-            Write-Host "::error::Tag $env:TAG ($tag) does not match wails.json productVersion $env:VERSION ($ver). Bump wails.json before tagging."
-            exit 1
-          }
-          Write-Host "Tag $env:TAG matches wails.json version $env:VERSION."
+          Get-ChildItem -Filter *.exe | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content -Path SHA256SUMS.txt -Encoding ascii
+          Get-Content SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Termi-v${{ steps.meta.outputs.version }}-windows-amd64
+          name: Termi-v${{ needs.check.outputs.version }}-windows-amd64
           path: |
-            build/bin/Termi-v${{ steps.meta.outputs.version }}-setup.exe
-            build/bin/Termi-v${{ steps.meta.outputs.version }}.exe
+            build/bin/Termi-v${{ needs.check.outputs.version }}-setup.exe
+            build/bin/Termi-v${{ needs.check.outputs.version }}.exe
+            build/bin/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
   release:
     name: Publish release
-    needs: build
+    needs: [check, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -99,12 +153,57 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create GitHub release
+      - name: Compose release notes
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo '### Downloads'
+            echo
+            echo "| File | Use it for |"
+            echo "| --- | --- |"
+            echo "| \`Termi-v${VERSION}-setup.exe\` | **Installer.** Installs to \`Program Files\`, adds Start Menu and desktop shortcuts, and puts \`termi\` on your PATH. Run this to upgrade an existing install. |"
+            echo "| \`Termi-v${VERSION}.exe\` | **Portable.** Runs on its own with no install. It does *not* update an installed copy — the two are separate. |"
+            echo "| \`SHA256SUMS.txt\` | Checksums for the two files above. |"
+            echo
+            echo '> Termi is not code-signed, so Windows SmartScreen will warn on first run.'
+            echo '> Choose **More info → Run anyway**, or verify the download against `SHA256SUMS.txt` first.'
+            echo
+          } > notes.md
+          cat notes.md
+
+      # Re-running a tag should not fail, so update the release if it exists.
+      - name: Create or update the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
-          gh release create "$TAG" dist/*.exe \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Termi $TAG" \
-            --generate-notes
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/*)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::No build artifacts were downloaded"
+            exit 1
+          fi
+          printf 'Publishing %s asset(s):\n' "${#assets[@]}"
+          printf '  %s\n' "${assets[@]}"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — updating it."
+            gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Termi $TAG" --notes-file notes.md
+          else
+            flags=(
+              --repo "$GITHUB_REPOSITORY"
+              --title "Termi $TAG"
+              --notes-file notes.md
+              --generate-notes
+            )
+            if [ "$PRERELEASE" = "true" ]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$TAG" "${assets[@]}" "${flags[@]}"
+          fi

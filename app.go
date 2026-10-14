@@ -52,6 +52,9 @@ type Settings struct {
 	FontSize int    `json:"fontSize"`
 	Theme    string `json:"theme"`
 	Shell    string `json:"shell"`
+	// StartupDir is the folder new terminals open in. Empty means the user's
+	// home directory.
+	StartupDir string `json:"startupDir"`
 }
 
 // App struct
@@ -129,14 +132,46 @@ func (a *App) SaveSettings(s Settings) error {
 	return os.WriteFile(filepath.Join(configDir(), "settings.json"), data, 0644)
 }
 
+// startupDir resolves where a new shell should open: the configured folder if it
+// still exists, otherwise the user's home directory.
+//
+// It deliberately does not fall back to the process working directory. Launching
+// from the Start Menu or desktop shortcut makes that the install folder under
+// Program Files, which is a useless place to start working.
+func (a *App) startupDir() string {
+	a.mu.Lock()
+	configured := strings.TrimSpace(a.settings.StartupDir)
+	a.mu.Unlock()
+
+	if configured != "" {
+		if info, err := os.Stat(configured); err == nil && info.IsDir() {
+			return configured
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return home
+	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
+
+// ChooseStartupDir opens a native folder picker for the startup folder setting.
+// It returns an empty string if the user cancels.
+func (a *App) ChooseStartupDir() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Choose the folder new terminals open in",
+		DefaultDirectory: a.startupDir(),
+	})
+}
+
 // shellCommand returns the executable and args for the selected shell
 func (a *App) shellCommand() (string, []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	exe := "powershell.exe"
 	var args []string
-	
+
 	switch a.settings.Shell {
 	case "CMD":
 		exe = "cmd.exe"
@@ -146,11 +181,11 @@ func (a *App) shellCommand() (string, []string) {
 		exe = "powershell.exe"
 		args = []string{"-NoLogo", "-ExecutionPolicy", "RemoteSigned"}
 	}
-	
+
 	if fullPath, err := exec.LookPath(exe); err == nil {
 		exe = fullPath
 	}
-	
+
 	return exe, args
 }
 
@@ -160,12 +195,7 @@ func (a *App) shellCommand() (string, []string) {
 // If initialDir is provided, the shell starts there (if supported by the shell).
 func (a *App) StartTerminal(initialDir string) (string, error) {
 	if initialDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			initialDir, _ = os.UserHomeDir()
-		} else {
-			initialDir = cwd
-		}
+		initialDir = a.startupDir()
 	}
 
 	shellExe, shellArgs := a.shellCommand()
@@ -218,17 +248,17 @@ func (a *App) StartTerminal(initialDir string) (string, error) {
 				break
 			}
 			chunk := string(buf[:n])
-			
+
 			// Broadcast output
 			runtime.EventsEmit(a.ctx, "terminal-output", TerminalEvent{
 				TabID: sessionID,
 				Data:  chunk,
 			})
-			
+
 			// Detect CWD
 			a.detectCwdChange(sessionID, chunk)
 		}
-		
+
 		// When PTY closes naturally (e.g. user typed 'exit')
 		runtime.EventsEmit(a.ctx, "terminal-closed", sessionID)
 		a.CloseTerminal(sessionID)
@@ -441,7 +471,7 @@ func (a *App) ResizeTerminal(tabID string, cols int, rows int) {
 	a.mu.Lock()
 	session, exists := a.sessions[tabID]
 	a.mu.Unlock()
-	
+
 	if exists && session.PtyTerm != nil {
 		session.PtyTerm.Resize(cols, rows)
 	}

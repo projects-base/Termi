@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"fmt"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -17,7 +18,9 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Termi",
+		// Version comes from the embedded wails.json, so the title bar always
+		// agrees with the build (see version.go).
+		Title:  fmt.Sprintf("%s v%s", appInfo.ProductName, appInfo.Version),
 		Width:  1024,
 		Height: 768,
 		AssetServer: &assetserver.Options{

@@ -62,14 +62,14 @@ If you want to distribute Termi to others with an official `.exe` Windows Instal
 This script will:
 - Read your exact version configuration from `wails.json`.
 - Spin up the Wails NSIS installer-compiler.
-- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v5.0.0.exe` and `Termi-v5.0.0-setup.exe`).
+- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v6.0.0.exe` and `Termi-v6.0.0-setup.exe`).
 
 ### Windows SmartScreen ("Safe to Run")
-Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v5.0.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
+Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v6.0.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
 
 Once you purchase a certificate, you can securely sign the installer using the Windows SDK:
 ```powershell
-signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v5.0.0-setup.exe
+signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v6.0.0-setup.exe
 ```
 
 ### Building Installers on GitHub Actions
@@ -78,23 +78,41 @@ You do not have to build locally. [`.github/workflows/build-installer.yml`](.git
 runs the same `build_release.ps1` pipeline on a `windows-latest` runner, so CI and
 your machine cannot drift apart.
 
+The workflow runs in three stages, so a mistake is caught before it costs a build:
+
+| Job | Runner | What it does |
+|---|---|---|
+| **Check version** | `ubuntu-latest` | Reads `info.productVersion` from `wails.json` and, on a tag, verifies the tag agrees with it |
+| **Windows installer** | `windows-latest` | `go test ./...`, then `build_release.ps1`, then SHA256 checksums |
+| **Publish release** | `ubuntu-latest` | Tags only — attaches the installer, the portable exe and `SHA256SUMS.txt` to a GitHub release |
+
 | Trigger | What happens |
 |---|---|
-| Push or PR to `master` | Builds the app and installer, uploads them as a workflow artifact (kept 30 days) |
-| Push a `v*` tag | Builds, then publishes a GitHub release with both `.exe` files attached |
+| Push or PR to `master` | Builds and tests, uploads the output as a workflow artifact (kept 30 days) |
+| Push a `v*` tag | Builds, then publishes a GitHub release with both `.exe` files and checksums |
 | **Run workflow** button | Same as a `master` push, on demand |
 
 To cut a release:
 
 1. Bump `info.productVersion` in `wails.json`, then commit.
-2. Tag and push: `git tag v5.0 && git push --tags`
-3. The workflow builds and publishes the release with auto-generated notes.
+2. Tag and push: `git tag v6.0 && git push --tags`
+3. The workflow builds and publishes the release.
 
 The installer filename is derived from `wails.json`, **not** from the tag, so the
-workflow checks the two agree before publishing and fails the run if they do not.
-Tags are compared on a zero-padded normal form, so the two-part `v5.0` used in this
-repo matches a `productVersion` of `5.0.0`; tagging `v5.1` against `5.0.0` stops the
-release instead of shipping a mislabeled installer.
+**Check version** job verifies the two agree before anything is built. Tags are
+compared on a zero-padded normal form, so the two-part `v6.0` used in this repo
+matches a `productVersion` of `6.0.0`; tagging `v6.1` against `6.0.0` fails in
+seconds rather than after a full Windows build. A tag carrying a suffix
+(`v5.1-beta1`) is published as a prerelease.
+
+Other things the workflow guarantees:
+
+- The Wails CLI version is read from `go.mod`, so the CLI that regenerates the
+  NSIS templates always matches the Wails the app is compiled against.
+- Tag runs are never cancelled mid-publish by a later push.
+- Re-running a tag updates the existing release instead of failing.
+- Release notes spell out that the portable `.exe` and the installer are separate
+  — running the portable build does **not** upgrade an installed copy.
 
 To build without tagging, open the **Actions** tab, pick **Build Installer**, and
 use **Run workflow** — the installer lands under the run's **Artifacts**.
@@ -127,6 +145,8 @@ Termi runs PowerShell via Windows ConPTY. Everything you can do in a normal term
 | Search output | **Ctrl+F**, then Enter/Shift+Enter to navigate matches |
 | Select all | **Ctrl+Shift+A**, or right-click > Select All |
 | Change shell (PowerShell / CMD / WSL) | **Ctrl+,** > Shell |
+| Set the folder new terminals open in | **Ctrl+,** > Startup Folder |
+| See the version / check for updates | Title bar, or **Ctrl+,** footer |
 | Undo / redo in the command bar | **Ctrl+Z** / **Ctrl+Y** (or **Ctrl+Shift+Z**) |
 | See every shortcut | **F1**, or the keyboard icon in the tab bar |
 
@@ -213,10 +233,54 @@ Press **Ctrl+,** or click the gear icon in the tab bar.
 | **Font size** | Applies to every open terminal straight away (10–24px) |
 | **Theme** | Dark or light, for both the app chrome and the terminal colours |
 | **Shell** | PowerShell, CMD or WSL |
+| **Startup folder** | Where new terminals open. **Browse** picks it, **Reset** goes back to your home folder |
 
 Changing the shell restarts every tab on the new shell. Tabs keep their position
-and their working directory — only the underlying session is replaced. Preferences
-are stored in `%APPDATA%/termi/settings.json` and reload on next launch.
+and their working directory — only the underlying session is replaced.
+
+The panel's footer shows the running version and has a **Check for updates**
+button; see [Version and updates](#version-and-updates).
+
+### Where your data lives
+
+Everything Termi remembers sits in `%APPDATA%\termi\`:
+
+| File | Holds |
+|---|---|
+| `settings.json` | Font size, theme, shell, startup folder |
+| `history.txt` | Command history |
+| `recent.json` | Recent folders |
+
+**Installing a new version does not touch any of it.** The installer only writes to
+the install folder under `Program Files`, so your settings, history and recent
+folders carry across an upgrade. Uninstalling clears the WebView2 cache
+(`%APPDATA%\Termi.exe`) but leaves `%APPDATA%\termi\` in place, so reinstalling
+later picks your settings back up.
+
+### Startup folder
+
+Launched from the Start Menu or desktop shortcut, a Windows app inherits the
+install folder as its working directory — which would drop you in
+`C:\Program Files\Projects Base\Termi`. Termi ignores that and opens new
+terminals in your home folder instead, or in whatever you set as the **Startup
+folder** in Settings.
+
+### Version and updates
+
+The running version shows in two places:
+
+- The window title bar — `Termi v6.0.0`
+- **Settings** (**Ctrl+,**) — the footer, next to **Check for updates**
+
+Both read the version from `wails.json`, which is embedded into the binary at build
+time, so the title bar, the installer and the release tag can never disagree.
+
+A few seconds after launch Termi checks GitHub for a newer release, once. It stays
+silent unless there is one — being offline or rate limited is not worth a
+notification. When an update exists you get a toast, and the Settings footer links
+to the release page. Termi does not download or install anything by itself; you
+pick up the new installer from that page and run it, and your settings and history
+survive, as above.
 
 ### Auto-Complete
 
@@ -274,6 +338,7 @@ termi/
 ├── build_release.ps1    # Local + CI installer build pipeline
 ├── main.go              # App entry point, Wails window config
 ├── app.go               # Backend: PTY, file ops, history, completions
+├── version.go           # Embedded version info + GitHub update check
 ├── frontend/src/
 │   ├── App.svelte        # Main layout: terminal + explorer
 │   ├── TreeNode.svelte   # Recursive file tree component

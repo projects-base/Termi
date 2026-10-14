@@ -36,21 +36,33 @@ try {
 
 Write-Host "Building $appName v$version with NSIS Output..." -ForegroundColor Cyan
 
-# 2. Trigger natively packaged Wails NSIS build
+$binDir = "build\bin"
+
+# 2. Clear previous output. Builds are named after the version, so without this
+# an older release stays behind and sits next to the new one - easy to ship or
+# run by mistake, and it would also land in the CI checksum file.
+if (Test-Path $binDir) {
+    $stale = @(Get-ChildItem $binDir -File | Where-Object { $_.Extension -eq ".exe" -or $_.Name -eq "SHA256SUMS.txt" })
+    if ($stale.Count -gt 0) {
+        $stale | ForEach-Object { Write-Host "  removing stale $($_.Name)" -ForegroundColor DarkGray }
+        $stale | Remove-Item -Force
+    }
+}
+
+# 3. Trigger natively packaged Wails NSIS build
 wails build -nsis
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error: 'wails build -nsis' failed with exit code $LASTEXITCODE." -ForegroundColor Red
     exit $LASTEXITCODE
 }
 
-$binDir = "build\bin"
 $baseExe = "$binDir\${appName}.exe"
 $installerExe = "$binDir\${appName}-amd64-installer.exe"
 
 $newBaseExe = "$binDir\${appName}-v${version}.exe"
 $newInstallerExe = "$binDir\${appName}-v${version}-setup.exe"
 
-# 3. Rename binaries gracefully to include the version
+# 4. Rename binaries gracefully to include the version
 if (Test-Path $baseExe) {
     Move-Item -Path $baseExe -Destination $newBaseExe -Force
     Write-Host "[OK] Renamed App: $(Split-Path $newBaseExe -Leaf)" -ForegroundColor Green
@@ -64,7 +76,7 @@ if (Test-Path $installerExe) {
     exit 1
 }
 
-# 4. Warn about SmartScreen
+# 5. Warn about SmartScreen
 Write-Host "`n=================================================" -ForegroundColor Magenta
 Write-Host "Code Signing and Windows SmartScreen ('Safe to Run')" -ForegroundColor White
 Write-Host "=================================================" -ForegroundColor Magenta
