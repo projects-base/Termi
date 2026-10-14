@@ -185,6 +185,22 @@ jobs:
             "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           }
 
+      # main.go embeds all:frontend/dist, so the Go package does not compile
+      # until the frontend has been built - and frontend/dist is gitignored, so
+      # a fresh checkout has none. wails build would produce it, but that runs
+      # later, and tests should gate the slow Windows build rather than trail it.
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path dist/index.html)) {
+            Write-Host "::error::The frontend build produced no frontend/dist/index.html"
+            exit 1
+          }
+
       - name: Run tests
         run: go test ./...
 
