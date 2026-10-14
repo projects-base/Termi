@@ -174,49 +174,84 @@ jobs:
           Write-Host "::error::go mod download failed after $attempts attempts"
           exit 1
 
-      # This step used to append the NSIS directory to PATH and stop there. If
-      # choco failed, that append still succeeded, so the step reported success
-      # with no makensis on the box - and build_release.ps1 then exited 1 within
-      # a second, with the real cause two steps back. Verify makensis actually
-      # exists, and retry choco, which downloads and so flakes like any other
-      # network call.
+      # Getting this right has been fiddly. choco exits 0 yet drops makensis
+      # in its own shim directory rather than under Program Files, and the
+      # machine PATH it edits is invisible to an already-running process. So
+      # search every plausible location, re-read PATH from the registry the way
+      # refreshenv does, and report what was actually on disk if it still is
+      # not found - job logs need admin rights on the repo, so anything not
+      # emitted as an annotation cannot be read back.
       - name: Ensure NSIS is available
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
 
+          function Update-PathFromRegistry {
+            $parts = @(
+              [Environment]::GetEnvironmentVariable('Path', 'Machine')
+              [Environment]::GetEnvironmentVariable('Path', 'User')
+              $env:PATH
+            ) | Where-Object { $_ }
+            $env:PATH = ($parts -join ';')
+          }
+
           function Find-MakeNSIS {
             $cmd = Get-Command makensis -ErrorAction SilentlyContinue
             if ($cmd) { return $cmd.Source }
-            foreach ($dir in @("C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS")) {
+            $dirs = @(
+              "$env:ProgramFiles\NSIS"
+              "${env:ProgramFiles(x86)}\NSIS"
+              "$env:ChocolateyInstall\bin"
+              "$env:ChocolateyInstall\lib\nsis\tools"
+              'C:\ProgramData\chocolatey\bin'
+              'C:\ProgramData\chocolatey\lib\nsis\tools'
+            ) | Where-Object { $_ }
+            foreach ($dir in $dirs) {
               $exe = Join-Path $dir 'makensis.exe'
-              if (Test-Path $exe) { return $exe }
+              if (Test-Path $exe) { return (Resolve-Path $exe).Path }
+            }
+            # Last resort: it is somewhere, so go and look.
+            foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, 'C:\ProgramData\chocolatey')) {
+              if (-not $root -or -not (Test-Path $root)) { continue }
+              $hit = Get-ChildItem -Path $root -Filter makensis.exe -Recurse -File `
+                       -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($hit) { return $hit.FullName }
             }
             return $null
           }
 
           $found = Find-MakeNSIS
           if ($found) {
-            Write-Host "NSIS is already present."
+            Write-Host "NSIS was already present."
           } else {
             $attempts = 3
             for ($i = 1; $i -le $attempts; $i++) {
               Write-Host "choco install nsis (attempt $i of $attempts)"
               choco install nsis --no-progress -y
               $code = $LASTEXITCODE
+              Update-PathFromRegistry
               $found = Find-MakeNSIS
               if ($found) { break }
-              Write-Host "::warning::NSIS is still absent after choco exited with $code"
+              Write-Host "::warning::NSIS still not found after choco exited with $code"
               if ($i -lt $attempts) { Start-Sleep -Seconds (5 * $i) }
             }
           }
 
           if (-not $found) {
+            # Surface the evidence as annotations, since the log is unreadable.
+            $seen = Get-ChildItem 'C:\ProgramData\chocolatey\lib' -Directory -ErrorAction SilentlyContinue |
+                    Select-Object -ExpandProperty Name
+            Write-Host "::warning::chocolatey packages present: $($seen -join ', ')"
+            foreach ($dir in @('C:\ProgramData\chocolatey\bin', "$env:ProgramFiles\NSIS", "${env:ProgramFiles(x86)}\NSIS")) {
+              Write-Host "::warning::$dir exists=$(Test-Path $dir)"
+            }
             Write-Host "::error::NSIS (makensis.exe) could not be installed, so the installer cannot be built"
             exit 1
           }
 
           Write-Host "makensis: $found"
           Split-Path $found -Parent | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & $found /VERSION
+          Write-Host ""
 
       # main.go embeds all:frontend/dist, so the Go package does not compile
       # until the frontend has been built - and frontend/dist is gitignored, so
