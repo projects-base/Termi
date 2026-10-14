@@ -194,7 +194,12 @@ jobs:
             $env:PATH = ($parts -join ';')
           }
 
+          # -Deep walks all of Program Files, which takes tens of seconds on a
+          # runner, so it is reserved for the point where the cheap lookups have
+          # already failed rather than run on every call.
           function Find-MakeNSIS {
+            param([switch]$Deep)
+
             $cmd = Get-Command makensis -ErrorAction SilentlyContinue
             if ($cmd) { return $cmd.Source }
             $dirs = @(
@@ -209,7 +214,10 @@ jobs:
               $exe = Join-Path $dir 'makensis.exe'
               if (Test-Path $exe) { return (Resolve-Path $exe).Path }
             }
-            # Last resort: it is somewhere, so go and look.
+
+            if (-not $Deep) { return $null }
+
+            Write-Host "  searching disk for makensis.exe"
             foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, 'C:\ProgramData\chocolatey')) {
               if (-not $root -or -not (Test-Path $root)) { continue }
               $hit = Get-ChildItem -Path $root -Filter makensis.exe -Recurse -File `
@@ -229,7 +237,7 @@ jobs:
               choco install nsis --no-progress -y
               $code = $LASTEXITCODE
               Update-PathFromRegistry
-              $found = Find-MakeNSIS
+              $found = Find-MakeNSIS -Deep:($i -eq $attempts)
               if ($found) { break }
               Write-Host "::warning::NSIS still not found after choco exited with $code"
               if ($i -lt $attempts) { Start-Sleep -Seconds (5 * $i) }
