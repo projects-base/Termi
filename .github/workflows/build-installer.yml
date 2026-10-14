@@ -174,16 +174,49 @@ jobs:
           Write-Host "::error::go mod download failed after $attempts attempts"
           exit 1
 
+      # This step used to append the NSIS directory to PATH and stop there. If
+      # choco failed, that append still succeeded, so the step reported success
+      # with no makensis on the box - and build_release.ps1 then exited 1 within
+      # a second, with the real cause two steps back. Verify makensis actually
+      # exists, and retry choco, which downloads and so flakes like any other
+      # network call.
       - name: Ensure NSIS is available
         run: |
-          if (Get-Command makensis -ErrorAction SilentlyContinue) {
-            Write-Host "makensis already on PATH."
-          } elseif (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
-            "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          } else {
-            choco install nsis --no-progress -y
-            "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          function Find-MakeNSIS {
+            $cmd = Get-Command makensis -ErrorAction SilentlyContinue
+            if ($cmd) { return $cmd.Source }
+            foreach ($dir in @("C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS")) {
+              $exe = Join-Path $dir 'makensis.exe'
+              if (Test-Path $exe) { return $exe }
+            }
+            return $null
           }
+
+          $found = Find-MakeNSIS
+          if ($found) {
+            Write-Host "NSIS is already present."
+          } else {
+            $attempts = 3
+            for ($i = 1; $i -le $attempts; $i++) {
+              Write-Host "choco install nsis (attempt $i of $attempts)"
+              choco install nsis --no-progress -y
+              $code = $LASTEXITCODE
+              $found = Find-MakeNSIS
+              if ($found) { break }
+              Write-Host "::warning::NSIS is still absent after choco exited with $code"
+              if ($i -lt $attempts) { Start-Sleep -Seconds (5 * $i) }
+            }
+          }
+
+          if (-not $found) {
+            Write-Host "::error::NSIS (makensis.exe) could not be installed, so the installer cannot be built"
+            exit 1
+          }
+
+          Write-Host "makensis: $found"
+          Split-Path $found -Parent | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       # main.go embeds all:frontend/dist, so the Go package does not compile
       # until the frontend has been built - and frontend/dist is gitignored, so
@@ -205,7 +238,12 @@ jobs:
         run: go test ./...
 
       - name: Build app and NSIS installer
-        run: .\build_release.ps1
+        run: |
+          .\build_release.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::build_release.ps1 failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
 
       # Termi is not code-signed, so publish hashes people can check against
       # what they downloaded.
