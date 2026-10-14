@@ -89,7 +89,8 @@ jobs:
       # Pin the CLI to the same Wails the module builds against. The CLI
       # regenerates build/windows/installer/wails_tools.nsh on every -nsis
       # build, so a mismatched CLI would quietly change the installer.
-      - name: Install Wails CLI
+      - name: Resolve the Wails CLI version
+        id: wails
         run: |
           $match = Select-String -Path go.mod -Pattern '^\s+github\.com/wailsapp/wails/v2\s+(v\S+)' |
                    Select-Object -First 1
@@ -98,8 +99,80 @@ jobs:
             exit 1
           }
           $version = $match.Matches[0].Groups[1].Value
-          Write-Host "Installing Wails CLI $version (from go.mod)"
-          go install "github.com/wailsapp/wails/v2/cmd/wails@$version"
+          Write-Host "Wails CLI version from go.mod: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # The CLI is not a dependency of this module, so it is absent from go.sum
+      # and from the module cache setup-go restores. Installing it therefore
+      # always reaches out to proxy.golang.org and sum.golang.org. Cache the
+      # compiled binary so a repeat run needs neither.
+      - name: Restore the cached Wails CLI
+        id: wails-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/wails.exe
+          key: wails-cli-${{ runner.os }}-${{ steps.wails.outputs.version }}
+
+      # proxy.golang.org and sum.golang.org both flake now and then, dropping
+      # the connection mid-response ("stream error ... INTERNAL_ERROR"). That is
+      # transient, so retry it instead of failing the run. Verification stays on.
+      - name: Install the Wails CLI
+        if: steps.wails-cache.outputs.cache-hit != 'true'
+        env:
+          WAILS_VERSION: ${{ steps.wails.outputs.version }}
+        run: |
+          # GitHub runs pwsh with $ErrorActionPreference = 'stop'. Keep a
+          # non-zero exit from a native command a plain exit code rather than a
+          # terminating error, or the retry below would never get a second go.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $pkg = "github.com/wailsapp/wails/v2/cmd/wails@$env:WAILS_VERSION"
+          $attempts = 4
+          for ($i = 1; $i -le $attempts; $i++) {
+            Write-Host "go install $pkg (attempt $i of $attempts)"
+            go install $pkg
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -lt $attempts) {
+              $wait = 5 * $i
+              Write-Host "::warning::go install failed with exit code $LASTEXITCODE - retrying in $wait seconds"
+              Start-Sleep -Seconds $wait
+            }
+          }
+          Write-Host "::error::go install $pkg failed after $attempts attempts"
+          exit 1
+
+      - name: Check the Wails CLI runs
+        run: |
+          $gobin = Join-Path (go env GOPATH) 'bin'
+          if (-not (Test-Path (Join-Path $gobin 'wails.exe'))) {
+            Write-Host "::error::wails.exe is missing from $gobin"
+            exit 1
+          }
+          # setup-go normally puts this on PATH; make sure, since a cache
+          # restore writes the binary without going through the toolchain.
+          $gobin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & (Join-Path $gobin 'wails.exe') version
+
+      # Same flake risk as above, on a cold module cache. Fetching up front
+      # keeps it out of the test and build steps, which are slow to redo.
+      - name: Download Go modules
+        run: |
+          # GitHub runs pwsh with $ErrorActionPreference = 'stop'. Keep a
+          # non-zero exit from a native command a plain exit code rather than a
+          # terminating error, or the retry below would never get a second go.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $attempts = 4
+          for ($i = 1; $i -le $attempts; $i++) {
+            Write-Host "go mod download (attempt $i of $attempts)"
+            go mod download
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -lt $attempts) {
+              $wait = 5 * $i
+              Write-Host "::warning::go mod download failed with exit code $LASTEXITCODE - retrying in $wait seconds"
+              Start-Sleep -Seconds $wait
+            }
+          }
+          Write-Host "::error::go mod download failed after $attempts attempts"
+          exit 1
 
       - name: Ensure NSIS is available
         run: |
