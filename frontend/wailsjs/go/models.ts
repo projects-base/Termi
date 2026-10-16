@@ -54,6 +54,48 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class FilePreview {
+	    path: string;
+	    name: string;
+	    ext: string;
+	    size: number;
+	    sizeText: string;
+	    modified: string;
+	    isDir: boolean;
+	    kind: string;
+	    dataURI?: string;
+	    columns?: string[];
+	    rows?: string[][];
+	    sheet?: string;
+	    text?: string;
+	    note?: string;
+	    truncated: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FilePreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.name = source["name"];
+	        this.ext = source["ext"];
+	        this.size = source["size"];
+	        this.sizeText = source["sizeText"];
+	        this.modified = source["modified"];
+	        this.isDir = source["isDir"];
+	        this.kind = source["kind"];
+	        this.dataURI = source["dataURI"];
+	        this.columns = source["columns"];
+	        this.rows = source["rows"];
+	        this.sheet = source["sheet"];
+	        this.text = source["text"];
+	        this.note = source["note"];
+	        this.truncated = source["truncated"];
+	        this.error = source["error"];
+	    }
+	}
 	export class RecentPath {
 	    path: string;
 	    name: string;

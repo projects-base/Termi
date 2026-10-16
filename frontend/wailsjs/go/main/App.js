@@ -18,6 +18,10 @@ export function ClearRecentPaths() {
   return window['go']['main']['App']['ClearRecentPaths']();
 }
 
+export function ClipboardFilePaths() {
+  return window['go']['main']['App']['ClipboardFilePaths']();
+}
+
 export function CloseTerminal(arg1) {
   return window['go']['main']['App']['CloseTerminal'](arg1);
 }
@@ -74,6 +78,10 @@ export function PasteToTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['PasteToTerminal'](arg1, arg2, arg3);
 }
 
+export function PreviewFile(arg1) {
+  return window['go']['main']['App']['PreviewFile'](arg1);
+}
+
 export function RemoveRecentPath(arg1) {
   return window['go']['main']['App']['RemoveRecentPath'](arg1);
 }
@@ -92,6 +100,10 @@ export function RestartTerminal(arg1) {
 
 export function SaveCommandHistory(arg1) {
   return window['go']['main']['App']['SaveCommandHistory'](arg1);
+}
+
+export function SavePastedBlob(arg1, arg2) {
+  return window['go']['main']['App']['SavePastedBlob'](arg1, arg2);
 }
 
 export function SaveRecentPath(arg1) {

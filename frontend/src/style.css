@@ -69,6 +69,9 @@ body {
     background: var(--topbar-bg);
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
+    /* Opts this element in as a Wails file-drop target. Without it, a file
+       dragged from Explorer is ignored here and no paths are ever resolved. */
+    --wails-drop-target: drop;
 }
 
 .prompt-label {
@@ -466,9 +469,19 @@ body {
 }
 
 /* === DROP INDICATOR === */
-.terminal-wrapper.drag-over {
+.terminal-wrapper {
+    --wails-drop-target: drop;
+}
+
+.terminal-wrapper.drag-over,
+/* Wails adds this class to every drop target while a drag is in flight. */
+.command-bar.wails-drop-target-active {
     outline: 2px dashed var(--accent);
     outline-offset: -4px;
+}
+
+.attach-bar {
+    --wails-drop-target: drop;
 }
 
 /* === TOAST CONTAINER === */

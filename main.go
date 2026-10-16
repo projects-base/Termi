@@ -27,7 +27,14 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        app.startup,
+		// Without this, a file dragged in from Explorer arrives as an empty
+		// text/plain payload - the DOM never sees where it came from. Wails'
+		// own handler resolves the real absolute paths instead. Elements opt in
+		// by setting --wails-drop-target: drop in CSS.
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+		},
+		OnStartup: app.startup,
 		Bind: []interface{}{
 			app,
 		},

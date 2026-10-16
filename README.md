@@ -148,6 +148,7 @@ Termi runs PowerShell via Windows ConPTY. Everything you can do in a normal term
 | Set the folder new terminals open in | **Ctrl+,** > Startup Folder |
 | See the version / check for updates | Title bar, or **Ctrl+,** footer |
 | Undo / redo in the command bar | **Ctrl+Z** / **Ctrl+Y** (or **Ctrl+Shift+Z**) |
+| Put a file's path in the command | Drag it onto the command bar, or copy it and press **Ctrl+V** there |
 | See every shortcut | **F1**, or the keyboard icon in the tab bar |
 
 ### File Explorer
@@ -250,12 +251,49 @@ Everything Termi remembers sits in `%APPDATA%\termi\`:
 | `settings.json` | Font size, theme, shell, startup folder |
 | `history.txt` | Command history |
 | `recent.json` | Recent folders |
+| `attachments\` | Screenshots pasted into the command bar (see [Attaching files](#attaching-files)) |
 
 **Installing a new version does not touch any of it.** The installer only writes to
 the install folder under `Program Files`, so your settings, history and recent
 folders carry across an upgrade. Uninstalling clears the WebView2 cache
 (`%APPDATA%\Termi.exe`) but leaves `%APPDATA%\termi\` in place, so reinstalling
 later picks your settings back up.
+
+### Attaching files
+
+Typing a long path to check you have the right file is tedious, so you can hand
+the file to Termi instead:
+
+- **Drag** it from Explorer onto the command bar.
+- **Copy** it in Explorer and press **Ctrl+V** with the command bar focused.
+- **Paste a screenshot** straight from the clipboard.
+
+Either way the file's quoted path is inserted at the cursor, so it becomes part
+of whatever command you are building — `python clean.py "C:\data\sales.xlsx"`.
+Drop onto the *terminal* instead and the path goes there, as before.
+
+A chip appears above the command bar for each file. Click it to see inside:
+
+| File | Preview |
+|---|---|
+| Images (png, jpg, gif, bmp, webp, svg, ico, avif) | Thumbnail |
+| `.csv`, `.tsv` | First 20 rows as a table |
+| `.xlsx`, `.xlsm` | First 20 rows of the first sheet, with the sheet name |
+| Text, code, logs, json, xml, … | First 40 lines |
+| Anything else | Name, size and date |
+
+That is the point of the chips: to confirm the file is the one you meant before
+you run anything against it. Spreadsheet dates are shown as dates rather than as
+the serial numbers they are stored as, since `45000` identifies nothing.
+
+Removing a chip removes its path from the command too, and the chips clear once
+the command runs. **Ctrl+Z** undoes an insertion like any other edit.
+
+Two details worth knowing. A file *copied* in Explorer is referenced where it
+actually lives — Termi reads the real path from the Windows clipboard rather
+than copying the file anywhere. A *pasted screenshot* has no file on disk at
+all, so it is written to `%APPDATA%\termi\attachments\` first and the command
+points there; nothing deletes that folder for you.
 
 ### Startup folder
 

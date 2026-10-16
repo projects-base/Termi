@@ -13,6 +13,10 @@ export const commandHistory = writable([]);
 // Recently visited directories, newest first
 export const recentPaths = writable([]);
 
+// Files dropped or pasted into the command bar. Each entry is a FilePreview
+// from the backend, so the chip can show a thumbnail or the first rows.
+export const attachments = writable([]);
+
 // User preferences, mirrored from %APPDATA%/termi/settings.json
 export const settingsStore = writable({
     fontSize: 14,

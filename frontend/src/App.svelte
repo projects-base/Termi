@@ -20,6 +20,9 @@ import { onMount, tick } from "svelte";
         LoadSettings,
         GetAppInfo,
         CheckForUpdate,
+        ClipboardFilePaths,
+        SavePastedBlob,
+        PreviewFile,
     } from "../wailsjs/go/main/App.js";
     import {
         EventsOn,
@@ -37,6 +40,7 @@ import { onMount, tick } from "svelte";
         appInfo,
         commandHistory,
         recentPaths,
+        attachments,
     } from "./stores.js";
     import { registerShortcuts } from "./shortcuts.js";
     import {
@@ -56,6 +60,7 @@ import { onMount, tick } from "svelte";
     import ContextMenu from "./ContextMenu.svelte";
     import Toast from "./Toast.svelte";
     import Autocomplete from "./Autocomplete.svelte";
+    import AttachmentBar from "./AttachmentBar.svelte";
 
     // Multi-tab state
     let tabs = [];
@@ -548,6 +553,28 @@ import { onMount, tick } from "svelte";
         });
 
         // Listen for cwd changes detected by Go (terminal cd)
+        // Wails resolves OS file drops to real paths and tells us where the
+        // drop landed, so the same gesture can mean two things: onto the
+        // command bar it builds a command, onto a terminal it runs there.
+        EventsOn("files-dropped", async (payload) => {
+            const paths = payload?.paths || [];
+            if (!paths.length) return;
+
+            const target = document.elementFromPoint(payload.x, payload.y);
+            if (target && target.closest(".command-bar, .attach-bar")) {
+                await attachPaths(paths);
+                return;
+            }
+            if (activeTabId) {
+                pasteToTab(
+                    activeTabId,
+                    paths.map(quotePath).join(" "),
+                    bracketedPaste(activeTabId),
+                );
+                tabs.find((t) => t.id === activeTabId)?.term.focus();
+            }
+        });
+
         EventsOn("cwd-change", async (payload) => {
             const tab = tabs.find(t => t.id === payload.tabId);
             if (tab) {
@@ -608,6 +635,131 @@ import { onMount, tick } from "svelte";
     });
 
     // --- COMMAND BAR ---
+    // ===== ATTACHMENTS =====
+    // A shell command takes text, so an attached file contributes its quoted
+    // path. The preview exists purely so you can see what that path points at
+    // before pressing Enter.
+
+    /** Wrap a path for the shell. Double quotes work in PowerShell and CMD. */
+    function quotePath(p) {
+        return '"' + p + '"';
+    }
+
+    /** Insert text at the caret, keeping it separated from what is around it. */
+    function insertAtCaret(text) {
+        const el = commandTextarea;
+        if (!el) {
+            commandInput = commandInput ? commandInput + " " + text : text;
+            return;
+        }
+        pushUndo(currentCommandState(), false);
+
+        const start = el.selectionStart ?? commandInput.length;
+        const end = el.selectionEnd ?? start;
+        const before = commandInput.slice(0, start);
+        const after = commandInput.slice(end);
+
+        const lead = before && !/\s$/.test(before) ? " " : "";
+        const trail = after && !/^\s/.test(after) ? " " : "";
+        const piece = lead + text + trail;
+
+        commandInput = before + piece + after;
+        const caret = start + piece.length - trail.length;
+        tick().then(() => {
+            if (commandTextarea) {
+                commandTextarea.focus();
+                commandTextarea.setSelectionRange(caret, caret);
+            }
+        });
+    }
+
+    /** Add paths to the command and fetch a preview for each. */
+    async function attachPaths(paths) {
+        if (!paths || !paths.length) return;
+        insertAtCaret(paths.map(quotePath).join(" "));
+
+        for (const path of paths) {
+            let preview;
+            try {
+                preview = await PreviewFile(path);
+            } catch (err) {
+                preview = { path, name: path, error: "Preview failed" };
+            }
+            attachments.update((list) => {
+                // Re-attaching the same file refreshes it rather than stacking
+                // up duplicate chips.
+                const rest = list.filter((a) => a.path !== preview.path);
+                return [...rest, preview];
+            });
+        }
+    }
+
+    /** Base64 for the Go side, chunked so a big screenshot cannot blow the stack. */
+    function toBase64(bytes) {
+        let out = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+            out += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(out);
+    }
+
+    /** A pasted screenshot has no file on disk, so stage it and use that path. */
+    async function stagePastedFile(file) {
+        try {
+            const buf = new Uint8Array(await file.arrayBuffer());
+            const path = await SavePastedBlob(file.name || "pasted.png", toBase64(buf));
+            await attachPaths([path]);
+        } catch (err) {
+            if (toastRef) toastRef.showToast("Could not attach the pasted file");
+        }
+    }
+
+    async function handleCommandPaste(e) {
+        const dt = e.clipboardData;
+        if (!dt) return;
+        const types = Array.from(dt.types || []);
+        if (!types.includes("Files")) return; // ordinary text paste
+
+        e.preventDefault();
+
+        // Prefer the real location: a file copied in Explorer should be
+        // referenced where it lives, not duplicated into the staging folder.
+        let paths = [];
+        try {
+            paths = await ClipboardFilePaths();
+        } catch (err) {
+            paths = [];
+        }
+        if (paths && paths.length) {
+            await attachPaths(paths);
+            return;
+        }
+
+        for (const file of Array.from(dt.files || [])) {
+            await stagePastedFile(file);
+        }
+    }
+
+    /** Dropping the chip also drops its path from the command, as expected. */
+    function removeAttachment(path) {
+        attachments.update((list) => list.filter((a) => a.path !== path));
+        const token = quotePath(path);
+        const at = commandInput.indexOf(token);
+        if (at !== -1) {
+            pushUndo(currentCommandState(), false);
+            const before = commandInput.slice(0, at);
+            let after = commandInput.slice(at + token.length);
+            // The token sat between two spaces; keep one, not both.
+            if (/ $/.test(before) && /^ /.test(after)) after = after.slice(1);
+            commandInput = (before + after).replace(/ +$/, "");
+        }
+    }
+
+    function clearAttachments() {
+        attachments.set([]);
+    }
+
     function runCommand() {
         const cmd = commandInput.trim();
         if (!cmd) return;
@@ -626,6 +778,8 @@ import { onMount, tick } from "svelte";
         pushUndo(currentCommandState(), false);
         commandInput = "";
         autocompleteVisible = false;
+        // The previews described the command that just ran; they are stale now.
+        attachments.set([]);
         tabs.find((t) => t.id === activeTabId)?.term.focus();
     }
 
@@ -1079,6 +1233,11 @@ import { onMount, tick } from "svelte";
     }
 
     function handleDrop(e) {
+        // Files dragged in from Explorer are resolved by Wails instead, which
+        // is the only way to learn their real paths - see the files-dropped
+        // handler. This path serves drags from Termi's own file tree, which
+        // carry the path as text.
+        if (Array.from(e.dataTransfer.types || []).includes("Files")) return;
         e.preventDefault();
         dragOver = false;
         const path = e.dataTransfer.getData("text/plain");
@@ -1195,6 +1354,8 @@ import { onMount, tick } from "svelte";
             {/each}
         </div>
 
+        <AttachmentBar on:remove={(e) => removeAttachment(e.detail)} on:clear={clearAttachments} />
+
         <div class="command-bar" style="position: relative;">
             <Autocomplete
                 bind:this={autocompleteRef}
@@ -1211,6 +1372,7 @@ import { onMount, tick } from "svelte";
                 on:keydown={handleKeydown}
                 on:beforeinput={captureCommandEdit}
                 on:input={commitCommandEdit}
+                on:paste={handleCommandPaste}
                 placeholder="Type a command and press Enter…  (F1 for shortcuts)"
                 autocomplete="off"
                 spellcheck="false"

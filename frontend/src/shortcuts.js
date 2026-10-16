@@ -37,6 +37,8 @@ export const SHORTCUTS = [
     { id: "redoAlt", group: "Command bar", keys: "Ctrl+Shift+Z", label: "Redo edit (alternate)", manual: true },
     { id: "accept", group: "Command bar", keys: "Tab", label: "Accept the highlighted suggestion", manual: true },
     { id: "suggestNav", group: "Command bar", keys: "↑ / ↓", label: "Move through suggestions", manual: true },
+    { id: "attachPaste", group: "Command bar", keys: "Ctrl+V", label: "Attach a copied file (or a screenshot) as its path", manual: true },
+    { id: "attachDrop", group: "Command bar", keys: "Drag & drop", label: "Drop a file here to insert its path", manual: true },
 ];
 
 /** The order groups appear in the Shortcuts panel. */

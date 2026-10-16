@@ -98,6 +98,21 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.settings = a.LoadSettings()
+
+	// Wails resolves dropped files to real absolute paths, which the webview
+	// cannot do by itself. The coordinates are passed along so the frontend can
+	// tell whether the drop landed on the command bar or on a terminal and act
+	// accordingly.
+	runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
+		if len(paths) == 0 {
+			return
+		}
+		runtime.EventsEmit(ctx, "files-dropped", map[string]interface{}{
+			"x":     x,
+			"y":     y,
+			"paths": paths,
+		})
+	})
 }
 
 func generateID() string {

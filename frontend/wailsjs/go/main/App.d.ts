@@ -10,6 +10,8 @@ export function ClearCommandHistory():Promise<void>;
 
 export function ClearRecentPaths():Promise<void>;
 
+export function ClipboardFilePaths():Promise<Array<string>>;
+
 export function CloseTerminal(arg1:string):Promise<void>;
 
 export function CreateDirectory(arg1:string):Promise<void>;
@@ -38,6 +40,8 @@ export function OpenURL(arg1:string):Promise<void>;
 
 export function PasteToTerminal(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function PreviewFile(arg1:string):Promise<main.FilePreview>;
+
 export function RemoveRecentPath(arg1:string):Promise<Array<main.RecentPath>>;
 
 export function RenameFile(arg1:string,arg2:string):Promise<void>;
@@ -47,6 +51,8 @@ export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void
 export function RestartTerminal(arg1:string):Promise<string>;
 
 export function SaveCommandHistory(arg1:string):Promise<void>;
+
+export function SavePastedBlob(arg1:string,arg2:string):Promise<string>;
 
 export function SaveRecentPath(arg1:string):Promise<void>;
 

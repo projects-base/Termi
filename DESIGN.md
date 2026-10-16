@@ -63,6 +63,7 @@ Termi/
 ├── main.go                    # Wails app initialization, window config
 ├── app.go                     # Core backend: PTY, file ops, history, completions
 ├── version.go                 # Embedded version info + GitHub update check
+├── attachments.go             # Clipboard file paths, pasted blobs, file previews
 ├── go.mod / go.sum            # Go dependencies
 ├── wails.json                 # Wails build configuration & app versioning
 ├── build_release.ps1          # Automated NSIS compiler & code signing pipeline
@@ -76,6 +77,7 @@ Termi/
 │   │   ├── RecentPaths.svelte     # Recent folders panel (Ctrl+Shift+R)
 │   │   ├── ShortcutsPanel.svelte  # Keyboard shortcut list (F1)
 │   │   ├── SettingsPanel.svelte   # Font, theme and shell settings (Ctrl+,)
+│   │   ├── AttachmentBar.svelte   # Chips and previews for attached files
 │   │   ├── ContextMenu.svelte # Reusable right-click context menu
 │   │   ├── Toast.svelte       # Notification toast for long commands
 │   │   ├── Autocomplete.svelte    # Command bar auto-complete dropdown
