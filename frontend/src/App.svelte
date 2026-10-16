@@ -21,6 +21,7 @@ import { onMount, tick } from "svelte";
         GetAppInfo,
         CheckForUpdate,
         ClipboardFilePaths,
+        ClipboardImagePath,
         SavePastedBlob,
         PreviewFile,
     } from "../wailsjs/go/main/App.js";
@@ -718,13 +719,32 @@ import { onMount, tick } from "svelte";
     async function handleCommandPaste(e) {
         const dt = e.clipboardData;
         if (!dt) return;
+
+        // The payload has to be taken out now, synchronously. The browser
+        // neuters the event's DataTransfer the moment this handler yields, so
+        // reading dt.files after an await finds it empty - which is how pasted
+        // screenshots silently did nothing.
+        const pastedFiles = Array.from(dt.files || []);
+        if (!pastedFiles.length && dt.items) {
+            for (const item of Array.from(dt.items)) {
+                if (item.kind !== "file") continue;
+                const f = item.getAsFile();
+                if (f) pastedFiles.push(f);
+            }
+        }
+
         const types = Array.from(dt.types || []);
-        if (!types.includes("Files")) return; // ordinary text paste
+        const looksLikeFile = pastedFiles.length > 0 || types.includes("Files");
+
+        // An ordinary text paste is left completely alone. Anything with no
+        // text in it is worth asking Windows about, because a screenshot can
+        // reach the clipboard without the webview exposing it here at all.
+        if (!looksLikeFile && types.includes("text/plain")) return;
 
         e.preventDefault();
 
-        // Prefer the real location: a file copied in Explorer should be
-        // referenced where it lives, not duplicated into the staging folder.
+        // 1. A file copied in Explorer: reference it where it actually lives
+        //    rather than duplicating it into the staging folder.
         let paths = [];
         try {
             paths = await ClipboardFilePaths();
@@ -736,9 +756,30 @@ import { onMount, tick } from "svelte";
             return;
         }
 
-        for (const file of Array.from(dt.files || [])) {
-            await stagePastedFile(file);
+        // 2. The webview gave us the bytes, so stage those.
+        if (pastedFiles.length) {
+            for (const file of pastedFiles) {
+                await stagePastedFile(file);
+            }
+            return;
         }
+
+        // 3. A bitmap the webview never surfaced. Windows still has it.
+        try {
+            const imagePath = await ClipboardImagePath();
+            if (imagePath) {
+                await attachPaths([imagePath]);
+                return;
+            }
+        } catch (err) {
+            if (toastRef)
+                toastRef.showToast("Could not read the image from the clipboard");
+            return;
+        }
+
+        // Saying nothing here is what made the original bug so hard to spot.
+        if (toastRef)
+            toastRef.showToast("Nothing on the clipboard could be attached");
     }
 
     /** Dropping the chip also drops its path from the command, as expected. */

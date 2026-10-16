@@ -16,10 +16,12 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -779,4 +781,51 @@ func columnIndex(ref string) int {
 		return -1
 	}
 	return n - 1
+}
+
+// ---------- clipboard bitmap ----------
+//
+// A screenshot reaches the clipboard as a device-independent bitmap, not as a
+// file, and the webview may or may not surface that to a paste event. Reading
+// it here means the attachment works either way.
+//
+// Windows is asked to do the conversion rather than decoding the clipboard
+// bytes directly: that would mean converting a locked memory handle into a Go
+// pointer, which go vet rightly objects to, plus handling every bit depth and
+// the zero-alpha screenshots that would otherwise save fully transparent.
+
+// ClipboardImagePath writes any bitmap on the clipboard to the staging folder
+// and returns its path. An empty path with a nil error means the clipboard
+// simply holds no image, which is not a failure.
+func (a *App) ClipboardImagePath() (string, error) {
+	target := filepath.Join(attachmentsDir(),
+		fmt.Sprintf("pasted-%s.png", time.Now().Format("20060102-150405")))
+
+	// The destination goes through the environment so no path can break the
+	// quoting, and exit code 2 distinguishes "no image" from a real failure.
+	const script = `$ErrorActionPreference = 'Stop'
+$img = Get-Clipboard -Format Image
+if ($null -eq $img) { exit 2 }
+$img.Save($env:TERMI_PASTE_TARGET, [System.Drawing.Imaging.ImageFormat]::Png)
+$img.Dispose()`
+
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command", script)
+	cmd.Env = append(os.Environ(), "TERMI_PASTE_TARGET="+target)
+	// Without this a console window flashes up on every paste.
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return "", nil // nothing image-shaped on the clipboard
+		}
+		return "", fmt.Errorf("could not read the image from the clipboard: %s",
+			strings.TrimSpace(string(out)))
+	}
+
+	if info, err := os.Stat(target); err != nil || info.Size() == 0 {
+		return "", fmt.Errorf("the clipboard image could not be saved")
+	}
+	return target, nil
 }

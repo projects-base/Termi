@@ -12,6 +12,8 @@ export function ClearRecentPaths():Promise<void>;
 
 export function ClipboardFilePaths():Promise<Array<string>>;
 
+export function ClipboardImagePath():Promise<string>;
+
 export function CloseTerminal(arg1:string):Promise<void>;
 
 export function CreateDirectory(arg1:string):Promise<void>;

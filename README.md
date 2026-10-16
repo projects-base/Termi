@@ -292,8 +292,10 @@ the command runs. **Ctrl+Z** undoes an insertion like any other edit.
 Two details worth knowing. A file *copied* in Explorer is referenced where it
 actually lives — Termi reads the real path from the Windows clipboard rather
 than copying the file anywhere. A *pasted screenshot* has no file on disk at
-all, so it is written to `%APPDATA%\termi\attachments\` first and the command
-points there; nothing deletes that folder for you.
+all, so it is written to `%APPDATA%\termi\attachments\` first, as a PNG, and the
+command points there; nothing deletes that folder for you. Termi asks
+Windows for the bitmap rather than relying on the webview to hand it over,
+because the webview does not always expose a pasted screenshot at all.
 
 ### Startup folder
 

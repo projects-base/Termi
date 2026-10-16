@@ -22,6 +22,10 @@ export function ClipboardFilePaths() {
   return window['go']['main']['App']['ClipboardFilePaths']();
 }
 
+export function ClipboardImagePath() {
+  return window['go']['main']['App']['ClipboardImagePath']();
+}
+
 export function CloseTerminal(arg1) {
   return window['go']['main']['App']['CloseTerminal'](arg1);
 }
