@@ -64,6 +64,7 @@ Termi/
 ├── app.go                     # Core backend: PTY, file ops, history, completions
 ├── version.go                 # Embedded version info + GitHub update check
 ├── updater.go                 # Downloads, verifies and installs a new release
+├── changelog.go               # Embedded CHANGELOG.md + a release's notes
 ├── attachments.go             # Clipboard file paths, pasted blobs, file previews
 ├── go.mod / go.sum            # Go dependencies
 ├── wails.json                 # Wails build configuration & app versioning
@@ -80,6 +81,7 @@ Termi/
 │   │   ├── SettingsPanel.svelte   # Font, theme and shell settings (Ctrl+,)
 │   │   ├── AttachmentBar.svelte   # Chips and previews for attached files
 │   │   ├── UpdateBanner.svelte    # "A newer version is available" bar
+│   │   ├── WhatsNewPanel.svelte   # What changed in a version
 │   │   ├── ContextMenu.svelte # Reusable right-click context menu
 │   │   ├── Toast.svelte       # Notification toast for long commands
 │   │   ├── Autocomplete.svelte    # Command bar auto-complete dropdown

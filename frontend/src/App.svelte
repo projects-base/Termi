@@ -22,6 +22,9 @@ import { onMount, tick } from "svelte";
         CheckForUpdateOnLaunch,
         SkipUpdateVersion,
         OpenURL,
+        WhatsNew,
+        TakeWhatsNew,
+        PendingVersionNotes,
         ClipboardFilePaths,
         ClipboardImagePath,
         SavePastedBlob,
@@ -45,6 +48,8 @@ import { onMount, tick } from "svelte";
         recentPaths,
         attachments,
         updateInfo,
+        whatsNewOpen,
+        whatsNew,
     } from "./stores.js";
     import { registerShortcuts } from "./shortcuts.js";
     import {
@@ -66,6 +71,7 @@ import { onMount, tick } from "svelte";
     import Autocomplete from "./Autocomplete.svelte";
     import AttachmentBar from "./AttachmentBar.svelte";
     import UpdateBanner from "./UpdateBanner.svelte";
+    import WhatsNewPanel from "./WhatsNewPanel.svelte";
 
     // Multi-tab state
     let tabs = [];
@@ -482,6 +488,19 @@ import { onMount, tick } from "svelte";
             console.error("Failed to read app info", err);
         }
 
+        // First launch after an update: say what changed, so an update that
+        // installed itself does not land silently. TakeWhatsNew records the
+        // version as it answers, so this happens once per update and never on
+        // a fresh install.
+        try {
+            if (await TakeWhatsNew()) {
+                whatsNew.set(await WhatsNew());
+                whatsNewOpen.set(true);
+            }
+        } catch (err) {
+            console.error("Could not read the changelog", err);
+        }
+
         // Look for a newer release once, a few seconds in so it never delays
         // startup. Stays silent unless there is actually an update: being
         // offline or rate limited is not worth interrupting anyone for. The
@@ -808,6 +827,35 @@ import { onMount, tick } from "svelte";
     function viewRelease() {
         const info = get(updateInfo);
         if (info && info.releaseURL) OpenURL(info.releaseURL);
+    }
+
+    // What is in the version being offered, read without leaving Termi. The
+    // panel opens straight away and fills in when the fetch lands, so a slow
+    // network looks like loading rather than like a dead button.
+    async function showPendingNotes() {
+        const info = get(updateInfo);
+        if (!info || !info.latestVersion) return;
+        whatsNew.set(null);
+        whatsNewOpen.set(true);
+        try {
+            whatsNew.set(await PendingVersionNotes(info.latestVersion));
+        } catch (err) {
+            whatsNew.set({
+                version: info.latestVersion,
+                error: "Could not fetch the notes for this version",
+            });
+        }
+    }
+
+    // Settings asks for this build's own entry, which is embedded.
+    async function showThisVersionNotes() {
+        whatsNew.set(null);
+        whatsNewOpen.set(true);
+        try {
+            whatsNew.set(await WhatsNew());
+        } catch (err) {
+            whatsNew.set({ error: "Could not read the changelog" });
+        }
     }
 
     async function skipThisVersion() {
@@ -1335,6 +1383,7 @@ import { onMount, tick } from "svelte";
         <!-- A newer release is out. Sits above the tabs so it is seen. -->
         <UpdateBanner
             on:view={viewRelease}
+            on:notes={showPendingNotes}
             on:skip={skipThisVersion}
             on:dismiss={() => updateInfo.set(null)}
         />
@@ -1656,5 +1705,6 @@ import { onMount, tick } from "svelte";
     items={ctxMenuItems}
 />
 <ShortcutsPanel />
-<SettingsPanel on:apply={handleSettingsApply} />
+<SettingsPanel on:apply={handleSettingsApply} on:whatsnew={showThisVersionNotes} />
+<WhatsNewPanel />
 <Toast bind:this={toastRef} />

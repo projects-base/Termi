@@ -50,6 +50,8 @@ export function OpenURL(arg1:string):Promise<void>;
 
 export function PasteToTerminal(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function PendingVersionNotes(arg1:string):Promise<main.Changelog>;
+
 export function PreviewFile(arg1:string):Promise<main.FilePreview>;
 
 export function RemoveRecentPath(arg1:string):Promise<Array<main.RecentPath>>;
@@ -71,5 +73,9 @@ export function SaveSettings(arg1:main.Settings):Promise<void>;
 export function SkipUpdateVersion(arg1:string):Promise<void>;
 
 export function StartTerminal(arg1:string):Promise<string>;
+
+export function TakeWhatsNew():Promise<boolean>;
+
+export function WhatsNew():Promise<main.Changelog>;
 
 export function WriteToTerminal(arg1:string,arg2:string):Promise<void>;

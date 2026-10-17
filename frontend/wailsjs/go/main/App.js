@@ -98,6 +98,10 @@ export function PasteToTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['PasteToTerminal'](arg1, arg2, arg3);
 }
 
+export function PendingVersionNotes(arg1) {
+  return window['go']['main']['App']['PendingVersionNotes'](arg1);
+}
+
 export function PreviewFile(arg1) {
   return window['go']['main']['App']['PreviewFile'](arg1);
 }
@@ -140,6 +144,14 @@ export function SkipUpdateVersion(arg1) {
 
 export function StartTerminal(arg1) {
   return window['go']['main']['App']['StartTerminal'](arg1);
+}
+
+export function TakeWhatsNew() {
+  return window['go']['main']['App']['TakeWhatsNew']();
+}
+
+export function WhatsNew() {
+  return window['go']['main']['App']['WhatsNew']();
 }
 
 export function WriteToTerminal(arg1, arg2) {

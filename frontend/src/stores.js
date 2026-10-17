@@ -6,6 +6,7 @@ export const searchOpen = writable(false);
 export const recentOpen = writable(false);
 export const shortcutsOpen = writable(false);
 export const settingsOpen = writable(false);
+export const whatsNewOpen = writable(false);
 
 // Command history
 export const commandHistory = writable([]);
@@ -25,10 +26,15 @@ export const settingsStore = writable({
     startupDir: "",
     notifyUpdates: true,
     skippedVersion: "",
+    lastRunVersion: "",
 });
 
 // A newer release found at launch, or null. Drives the update banner.
 export const updateInfo = writable(null);
+
+// The changelog entry the What's new panel is showing: either this build's own
+// after an update, or a pending version's fetched from GitHub.
+export const whatsNew = writable(null);
 
 // This build's name, version and copyright, read from the embedded wails.json
 export const appInfo = writable({

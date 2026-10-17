@@ -63,6 +63,9 @@ type Settings struct {
 	// SkippedVersion is a release the user asked not to be reminded about.
 	// Anything newer than it still gets a banner.
 	SkippedVersion string `json:"skippedVersion"`
+	// LastRunVersion is the version that ran last, which is how the first
+	// launch after an update is spotted. Empty on a fresh install.
+	LastRunVersion string `json:"lastRunVersion"`
 }
 
 // App struct

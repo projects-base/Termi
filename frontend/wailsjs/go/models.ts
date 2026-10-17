@@ -18,6 +18,26 @@ export namespace main {
 	        this.copyright = source["copyright"];
 	    }
 	}
+	export class Changelog {
+	    version: string;
+	    heading: string;
+	    body: string;
+	    source: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Changelog(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.heading = source["heading"];
+	        this.body = source["body"];
+	        this.source = source["source"];
+	        this.error = source["error"];
+	    }
+	}
 	export class FileEntry {
 	    name: string;
 	    path: string;
@@ -119,6 +139,7 @@ export namespace main {
 	    startupDir: string;
 	    notifyUpdates: boolean;
 	    skippedVersion: string;
+	    lastRunVersion: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -132,6 +153,7 @@ export namespace main {
 	        this.startupDir = source["startupDir"];
 	        this.notifyUpdates = source["notifyUpdates"];
 	        this.skippedVersion = source["skippedVersion"];
+	        this.lastRunVersion = source["lastRunVersion"];
 	    }
 	}
 	export class UpdateCheck {

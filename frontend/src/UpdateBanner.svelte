@@ -108,8 +108,8 @@
                 </button>
                 <button
                     class="update-later"
-                    on:click={() => dispatch("view")}
-                    title="Open the release page in your browser"
+                    on:click={() => dispatch("notes")}
+                    title="See what changed in this version"
                 >
                     What's new
                 </button>

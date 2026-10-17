@@ -230,6 +230,9 @@
             <div class="settings-about">
                 <div class="about-line">
                     <span class="about-name">{$appInfo.productName} v{$appInfo.version}</span>
+                    <button class="setting-btn" on:click={() => dispatch("whatsnew")}>
+                        What's new
+                    </button>
                     <button class="setting-btn" on:click={checkForUpdate} disabled={checking}>
                         {checking ? "Checking…" : "Check for updates"}
                     </button>
@@ -443,11 +446,13 @@
     .about-line {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
+        gap: 8px;
     }
 
+    /* Pushes the buttons to the right, which space-between cannot do once
+       there is more than one of them. */
     .about-name {
+        margin-right: auto;
         font-size: 12.5px;
         font-weight: 600;
         color: var(--text-primary, #e0e0e0);
