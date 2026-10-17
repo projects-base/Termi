@@ -92,7 +92,7 @@ func uninstallKeyPath() string {
 
 // installLocation finds the folder the installed copy of Termi lives in.
 //
-// InstallLocation is the obvious place to look, but installs made before 7.2
+// InstallLocation is the obvious place to look, but installs made before 7.3
 // never wrote it, so DisplayIcon - which points at the executable inside that
 // same folder - is the fallback. Without it the first in-app update would fail
 // for everyone already out there, which is every current user.
