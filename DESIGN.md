@@ -63,6 +63,7 @@ Termi/
 ├── main.go                    # Wails app initialization, window config
 ├── app.go                     # Core backend: PTY, file ops, history, completions
 ├── version.go                 # Embedded version info + GitHub update check
+├── updater.go                 # Downloads, verifies and installs a new release
 ├── attachments.go             # Clipboard file paths, pasted blobs, file previews
 ├── go.mod / go.sum            # Go dependencies
 ├── wails.json                 # Wails build configuration & app versioning

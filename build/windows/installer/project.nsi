@@ -50,6 +50,7 @@ ManifestDPIAware true
 
 !include "MUI.nsh"
 !include "WordFunc.nsh"
+!include "LogicLib.nsh"
 
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
@@ -78,11 +79,63 @@ ManifestDPIAware true
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
 InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
+# An upgrade must land on top of the existing install, not beside it. Without
+# this, a silent update from inside the app would always use the default folder,
+# leaving anyone who installed elsewhere with two copies.
+InstallDirRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINST_KEY_NAME}" "InstallLocation"
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
 FunctionEnd
+
+####
+## Removing $INSTDIR from a PATH string, correctly.
+##
+## Matching on ";$INSTDIR;" rather than on the bare folder name is the point: a
+## plain substring replace also eats a sibling folder, turning a PATH holding
+## "C:\PF\Termi Beta" into "C:\Windows Beta" when "C:\PF\Termi" is removed.
+##
+## One occurrence per pass, so duplicates sitting next to each other cannot
+## hide behind an overlap. The E flag is load-bearing - it is what makes
+## WordReplace set the error flag when there is nothing left to replace, and
+## without it this loop never ends.
+##
+## In:  $0 = the current PATH
+## Out: $1 = that PATH with every copy of $INSTDIR taken out
+####
+!macro PathWithoutInstDir UN
+Function ${UN}PathWithoutInstDir
+  ; Pad both ends so the first and last entries are delimited like the rest.
+  StrCpy $1 ";$0;"
+
+  path_loop:
+    ClearErrors
+    ${WordReplace} "$1" ";$INSTDIR;" ";" "E+1" $2
+    IfErrors path_done
+    StrCpy $1 "$2"
+    Goto path_loop
+  path_done:
+
+  ; Drop the padding.
+  StrLen $3 "$1"
+  IntOp $3 $3 - 2
+  StrCpy $1 "$1" $3 1
+
+  ; A PATH that already ended in ";" would otherwise be left with ";;".
+  ${If} $1 != ""
+    StrCpy $4 "$1" "" -1
+    ${If} $4 == ";"
+      StrCpy $1 "$1" -1
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+!macroend
+
+; The installer and the uninstaller need their own copies; NSIS keeps the two
+; sets of functions apart by the "un." prefix.
+!insertmacro PathWithoutInstDir ""
+!insertmacro PathWithoutInstDir "un."
 
 Section
     !insertmacro wails.setShellContext
@@ -108,8 +161,17 @@ Section
     DetailPrint "Adding ${INFO_PRODUCTNAME} to system PATH..."
     SetRegView 64
     ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
-    StrCpy $1 "$0;$INSTDIR"
-    WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" "$1"
+    # Take out any entry from a previous install before appending, so that
+    # installing over an existing copy cannot stack duplicates. It did: three
+    # installs left three identical entries, and an in-app updater that
+    # installs on every release would add one more each time.
+    Call PathWithoutInstDir
+    ${If} $1 == ""
+      StrCpy $5 "$INSTDIR"
+    ${Else}
+      StrCpy $5 "$1;$INSTDIR"
+    ${EndIf}
+    WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" "$5"
     # Notify the system about environment change
     SendMessage 0xFFFF 0x001A 0 "STR:Environment" /TIMEOUT=5000
 
@@ -117,6 +179,11 @@ Section
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+
+    # wails_tools.nsh writes the rest of the uninstall entry but not this, and
+    # both Windows and the in-app updater look for it.
+    SetRegView 64
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINST_KEY_NAME}" "InstallLocation" "$INSTDIR"
 SectionEnd
 
 Section "uninstall"
@@ -135,7 +202,7 @@ Section "uninstall"
     # --- Remove from PATH ---
     SetRegView 64
     ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
-    ${WordReplace} $0 ";$INSTDIR" "" "+" $1
+    Call un.PathWithoutInstDir
     WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" "$1"
     SendMessage 0xFFFF 0x001A 0 "STR:Environment" /TIMEOUT=5000
 

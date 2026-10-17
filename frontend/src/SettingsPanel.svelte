@@ -1,5 +1,5 @@
 <script>
-    import { settingsOpen, settingsStore, appInfo } from "./stores.js";
+    import { settingsOpen, settingsStore, appInfo, updateInfo } from "./stores.js";
     import {
         SaveSettings,
         ChooseStartupDir,
@@ -72,6 +72,11 @@
         update = null;
         try {
             update = await CheckForUpdate();
+            // Bring the banner back for it, so a manual check offers the same
+            // download-and-install as one found at launch instead of just a
+            // link. An explicit check is also the one place a skipped version
+            // should resurface.
+            if (update && update.available) updateInfo.set(update);
         } catch (err) {
             update = { error: "Update check failed" };
         } finally {
@@ -238,6 +243,7 @@
                         <!-- svelte-ignore a11y-no-static-element-interactions -->
                         <div class="about-status about-update">
                             Version {update.latestVersion} is available —
+                            see the bar at the top to install it, or
                             <span class="about-link" on:click={openRelease}>open the download page</span>
                         </div>
                     {:else}

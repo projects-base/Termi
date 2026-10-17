@@ -148,6 +148,7 @@ Termi runs PowerShell via Windows ConPTY. Everything you can do in a normal term
 | Set the folder new terminals open in | **Ctrl+,** > Startup Folder |
 | See the version / check for updates | Title bar, or **Ctrl+,** footer |
 | Hear about a new version | A bar above the tabs, a few seconds after launch |
+| Install a new version | **Download and install** on that bar |
 | Undo / redo in the command bar | **Ctrl+Z** / **Ctrl+Y** (or **Ctrl+Shift+Z**) |
 | Put a file's path in the command | Drag it onto the command bar, or copy it and press **Ctrl+V** there |
 | See every shortcut | **F1**, or the keyboard icon in the tab bar |
@@ -249,10 +250,11 @@ Everything Termi remembers sits in `%APPDATA%\termi\`:
 
 | File | Holds |
 |---|---|
-| `settings.json` | Font size, theme, shell, startup folder |
+| `settings.json` | Font size, theme, shell, startup folder, update preferences |
 | `history.txt` | Command history |
 | `recent.json` | Recent folders |
 | `attachments\` | Screenshots pasted into the command bar (see [Attaching files](#attaching-files)) |
+| `updates\` | The installer for an update being applied; older ones are cleared out |
 
 **Installing a new version does not touch any of it.** The installer only writes to
 the install folder under `Program Files`, so your settings, history and recent
@@ -323,13 +325,49 @@ notification.
 When there is a newer version, a bar appears above the tabs naming it, the version
 you are on and how long ago it was released. It is not a toast: it stays until you
 act on it, because a notice that fades after five seconds is missed by anyone who
-launched Termi and looked away. Three choices:
+launched Termi and looked away.
 
 | Button | What it does |
 | --- | --- |
-| **View release** | Opens the release page in your browser |
+| **Download and install** | Fetches the installer, checks it, then installs it — see below |
+| **What's new** | Opens the release page in your browser |
 | **Skip this version** | Never mentions that release again — anything newer still gets a bar |
 | **✕** | Hides it until the next launch |
+
+#### Updating in place
+
+**Download and install** does the whole thing from inside Termi, so there is no
+browser, no Downloads folder and no hunting for the right file.
+
+1. The installer for the new release is downloaded to `%APPDATA%\termi\updates\`,
+   with progress on the bar.
+2. It is hashed and compared against the `SHA256SUMS.txt` published with that
+   release. A file that does not match is deleted, not run.
+3. **Install and restart** closes Termi, runs the installer, and opens the new
+   version.
+
+Installing is a separate click from downloading on purpose: installing closes
+Termi, and Termi is holding your shells, so when that happens is your call rather
+than something that follows a download finishing mid-command.
+
+Three things are worth knowing:
+
+- **Windows will ask for permission.** The installer writes to `Program Files` and
+  the system PATH, so it asks for elevation and Windows shows a UAC prompt. Nothing
+  here suppresses that, and nothing should.
+- **Termi has to close** for its own exe to be replaced. A small helper waits for it
+  to exit, runs the installer, and starts the new build — and starts Termi again
+  even if the install failed or you declined the prompt, so a refused update never
+  leaves you without a terminal.
+- **The check is integrity, not authorship.** The installer and its checksum come
+  from the same release, so matching proves the download arrived intact and is the
+  file the release lists. It cannot prove who built it; that needs the signed
+  installer described under [Building](#building). Downloads are also pinned to
+  GitHub hosts over HTTPS, including redirects.
+
+If Termi is running as a portable exe rather than an installed copy, the bar offers
+**View release** instead: updating would replace the installed copy somewhere else
+and leave the one you are actually running untouched.
 
 Turn the whole thing off with **Update notice** in Settings (**Ctrl+,**), which also
 stops Termi contacting GitHub on its own; **Check for updates** in the Settings
