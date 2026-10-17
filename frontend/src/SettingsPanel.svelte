@@ -5,6 +5,7 @@
         ChooseStartupDir,
         CheckForUpdate,
         OpenURL,
+        SkipUpdateVersion,
     } from "../wailsjs/go/main/App.js";
     import { createEventDispatcher } from "svelte";
 
@@ -14,6 +15,7 @@
     let theme = "dark";
     let shell = "PowerShell";
     let startupDir = "";
+    let notifyUpdates = true;
 
     // Sync from store on open
     $: if ($settingsOpen) {
@@ -21,16 +23,23 @@
         theme = $settingsStore.theme;
         shell = $settingsStore.shell;
         startupDir = $settingsStore.startupDir || "";
+        // Absent in a settings.json written before the toggle existed, which
+        // must read as on rather than as off.
+        notifyUpdates = $settingsStore.notifyUpdates !== false;
     }
 
     async function applySettings() {
-        // Every field goes in: SaveSettings writes the whole file, so omitting
-        // one would blank it on disk.
+        // SaveSettings writes the whole file, so anything missing here is
+        // blanked on disk. Spreading the current settings first means a
+        // preference this panel does not edit - skippedVersion, say - survives
+        // an Apply instead of being quietly reset.
         const next = {
+            ...$settingsStore,
             fontSize,
             theme,
             shell,
             startupDir: startupDir.trim(),
+            notifyUpdates,
         };
         const shellChanged = shell !== $settingsStore.shell;
         settingsStore.set(next);
@@ -72,6 +81,12 @@
 
     function openRelease() {
         if (update && update.releaseURL) OpenURL(update.releaseURL);
+    }
+
+    // Skipping is done from the launch banner, so this is the only way back.
+    async function clearSkippedVersion() {
+        await SkipUpdateVersion("");
+        settingsStore.update((s) => ({ ...s, skippedVersion: "" }));
     }
 
     function close() {
@@ -173,6 +188,37 @@
                         Where new terminals open. Leave it empty for your home folder —
                         without this, a shortcut launch would start in the install folder.
                     </span>
+                </div>
+
+                <div class="setting-row">
+                    <span class="setting-label">Update Notice</span>
+                    <div class="setting-control">
+                        <label class="setting-check">
+                            <input
+                                type="checkbox"
+                                bind:checked={notifyUpdates}
+                                on:change={applySettings}
+                            />
+                            Tell me when a new version is available
+                        </label>
+                    </div>
+                    <span class="setting-hint">
+                        Checks GitHub once, a few seconds after launch, and shows a bar
+                        at the top only when there is something newer. Turn it off and
+                        Termi never contacts GitHub on its own — the button below still
+                        works whenever you want to look.
+                    </span>
+                    {#if $settingsStore.skippedVersion}
+                        <span class="setting-hint">
+                            Version {$settingsStore.skippedVersion} is skipped — you will
+                            only hear about something newer.
+                            <!-- svelte-ignore a11y-click-events-have-key-events -->
+                            <!-- svelte-ignore a11y-no-static-element-interactions -->
+                            <span class="about-link" on:click={clearSkippedVersion}>
+                                Stop skipping it
+                            </span>
+                        </span>
+                    {/if}
                 </div>
             </div>
 
@@ -285,6 +331,21 @@
         display: flex;
         align-items: center;
         gap: 12px;
+    }
+
+    .setting-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-primary, #e0e0e0);
+        cursor: pointer;
+    }
+
+    .setting-check input {
+        accent-color: var(--accent, #00d4ff);
+        cursor: pointer;
+        margin: 0;
     }
 
     .setting-slider {

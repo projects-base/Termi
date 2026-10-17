@@ -78,6 +78,7 @@ Termi/
 │   │   ├── ShortcutsPanel.svelte  # Keyboard shortcut list (F1)
 │   │   ├── SettingsPanel.svelte   # Font, theme and shell settings (Ctrl+,)
 │   │   ├── AttachmentBar.svelte   # Chips and previews for attached files
+│   │   ├── UpdateBanner.svelte    # "A newer version is available" bar
 │   │   ├── ContextMenu.svelte # Reusable right-click context menu
 │   │   ├── Toast.svelte       # Notification toast for long commands
 │   │   ├── Autocomplete.svelte    # Command bar auto-complete dropdown

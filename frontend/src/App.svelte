@@ -19,7 +19,9 @@ import { onMount, tick } from "svelte";
         LoadRecentPaths,
         LoadSettings,
         GetAppInfo,
-        CheckForUpdate,
+        CheckForUpdateOnLaunch,
+        SkipUpdateVersion,
+        OpenURL,
         ClipboardFilePaths,
         ClipboardImagePath,
         SavePastedBlob,
@@ -42,6 +44,7 @@ import { onMount, tick } from "svelte";
         commandHistory,
         recentPaths,
         attachments,
+        updateInfo,
     } from "./stores.js";
     import { registerShortcuts } from "./shortcuts.js";
     import {
@@ -62,6 +65,7 @@ import { onMount, tick } from "svelte";
     import Toast from "./Toast.svelte";
     import Autocomplete from "./Autocomplete.svelte";
     import AttachmentBar from "./AttachmentBar.svelte";
+    import UpdateBanner from "./UpdateBanner.svelte";
 
     // Multi-tab state
     let tabs = [];
@@ -479,16 +483,14 @@ import { onMount, tick } from "svelte";
         }
 
         // Look for a newer release once, a few seconds in so it never delays
-        // startup. Stays silent unless there is actually an update — being
-        // offline or rate limited is not worth a toast.
+        // startup. Stays silent unless there is actually an update: being
+        // offline or rate limited is not worth interrupting anyone for. The
+        // backend applies the user's preferences, so an update they turned off
+        // or skipped never reaches here.
         setTimeout(async () => {
             try {
-                const result = await CheckForUpdate();
-                if (result && result.available && toastRef) {
-                    toastRef.showToast(
-                        `Termi ${result.latestVersion} is available — see Settings (Ctrl+,)`,
-                    );
-                }
+                const result = await CheckForUpdateOnLaunch();
+                if (result && result.available) updateInfo.set(result);
             } catch (err) {
                 console.error("Update check failed", err);
             }
@@ -799,6 +801,29 @@ import { onMount, tick } from "svelte";
 
     function clearAttachments() {
         attachments.set([]);
+    }
+
+    // --- Update banner ---
+
+    function viewRelease() {
+        const info = get(updateInfo);
+        if (info && info.releaseURL) OpenURL(info.releaseURL);
+    }
+
+    async function skipThisVersion() {
+        const info = get(updateInfo);
+        updateInfo.set(null);
+        if (!info || !info.latestVersion) return;
+        try {
+            await SkipUpdateVersion(info.latestVersion);
+            if (toastRef) {
+                toastRef.showToast(
+                    `Termi ${info.latestVersion} skipped - you will still hear about later versions`,
+                );
+            }
+        } catch (err) {
+            console.error("Could not save the skipped version", err);
+        }
     }
 
     function runCommand() {
@@ -1307,6 +1332,13 @@ import { onMount, tick } from "svelte";
         on:dragleave={handleDragLeave}
         on:drop={handleDrop}
     >
+        <!-- A newer release is out. Sits above the tabs so it is seen. -->
+        <UpdateBanner
+            on:view={viewRelease}
+            on:skip={skipThisVersion}
+            on:dismiss={() => updateInfo.set(null)}
+        />
+
         <!-- Search bar overlay -->
         <SearchBar {searchAddon} />
 

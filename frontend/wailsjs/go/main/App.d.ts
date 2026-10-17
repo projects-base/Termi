@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function CheckForUpdate():Promise<main.UpdateCheck>;
 
+export function CheckForUpdateOnLaunch():Promise<main.UpdateCheck>;
+
 export function ChooseStartupDir():Promise<string>;
 
 export function ClearCommandHistory():Promise<void>;
@@ -59,6 +61,8 @@ export function SavePastedBlob(arg1:string,arg2:string):Promise<string>;
 export function SaveRecentPath(arg1:string):Promise<void>;
 
 export function SaveSettings(arg1:main.Settings):Promise<void>;
+
+export function SkipUpdateVersion(arg1:string):Promise<void>;
 
 export function StartTerminal(arg1:string):Promise<string>;
 

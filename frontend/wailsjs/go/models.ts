@@ -117,6 +117,8 @@ export namespace main {
 	    theme: string;
 	    shell: string;
 	    startupDir: string;
+	    notifyUpdates: boolean;
+	    skippedVersion: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -128,6 +130,8 @@ export namespace main {
 	        this.theme = source["theme"];
 	        this.shell = source["shell"];
 	        this.startupDir = source["startupDir"];
+	        this.notifyUpdates = source["notifyUpdates"];
+	        this.skippedVersion = source["skippedVersion"];
 	    }
 	}
 	export class UpdateCheck {

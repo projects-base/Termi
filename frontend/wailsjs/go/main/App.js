@@ -6,6 +6,10 @@ export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
 
+export function CheckForUpdateOnLaunch() {
+  return window['go']['main']['App']['CheckForUpdateOnLaunch']();
+}
+
 export function ChooseStartupDir() {
   return window['go']['main']['App']['ChooseStartupDir']();
 }
@@ -116,6 +120,10 @@ export function SaveRecentPath(arg1) {
 
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
+}
+
+export function SkipUpdateVersion(arg1) {
+  return window['go']['main']['App']['SkipUpdateVersion'](arg1);
 }
 
 export function StartTerminal(arg1) {

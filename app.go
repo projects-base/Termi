@@ -55,6 +55,14 @@ type Settings struct {
 	// StartupDir is the folder new terminals open in. Empty means the user's
 	// home directory.
 	StartupDir string `json:"startupDir"`
+	// NotifyUpdates governs the single update check made shortly after launch.
+	// LoadSettings fills the defaults in before unmarshalling, so a
+	// settings.json written before this field existed still reads as true
+	// rather than silently turning the check off.
+	NotifyUpdates bool `json:"notifyUpdates"`
+	// SkippedVersion is a release the user asked not to be reminded about.
+	// Anything newer than it still gets a banner.
+	SkippedVersion string `json:"skippedVersion"`
 }
 
 // App struct
@@ -79,9 +87,10 @@ func configDir() string {
 
 func defaultSettings() Settings {
 	return Settings{
-		FontSize: 14,
-		Theme:    "dark",
-		Shell:    "PowerShell",
+		FontSize:      14,
+		Theme:         "dark",
+		Shell:         "PowerShell",
+		NotifyUpdates: true,
 	}
 }
 
@@ -140,11 +149,27 @@ func (a *App) SaveSettings(s Settings) error {
 	a.mu.Lock()
 	a.settings = s
 	a.mu.Unlock()
+	return writeSettings(s)
+}
+
+func writeSettings(s Settings) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(configDir(), "settings.json"), data, 0644)
+}
+
+// SkipUpdateVersion records a release the user does not want to hear about
+// again. It writes the one field itself rather than going through
+// SaveSettings, because the banner is dismissed while the Settings panel is
+// shut - and that panel sends the whole settings object when it applies.
+func (a *App) SkipUpdateVersion(version string) error {
+	a.mu.Lock()
+	a.settings.SkippedVersion = strings.TrimSpace(version)
+	current := a.settings
+	a.mu.Unlock()
+	return writeSettings(current)
 }
 
 // startupDir resolves where a new shell should open: the configured folder if it

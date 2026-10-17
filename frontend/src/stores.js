@@ -23,7 +23,12 @@ export const settingsStore = writable({
     theme: "dark",
     shell: "PowerShell",
     startupDir: "",
+    notifyUpdates: true,
+    skippedVersion: "",
 });
+
+// A newer release found at launch, or null. Drives the update banner.
+export const updateInfo = writable(null);
 
 // This build's name, version and copyright, read from the embedded wails.json
 export const appInfo = writable({

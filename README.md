@@ -62,14 +62,14 @@ If you want to distribute Termi to others with an official `.exe` Windows Instal
 This script will:
 - Read your exact version configuration from `wails.json`.
 - Spin up the Wails NSIS installer-compiler.
-- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v7.1.0.exe` and `Termi-v7.1.0-setup.exe`).
+- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v7.2.0.exe` and `Termi-v7.2.0-setup.exe`).
 
 ### Windows SmartScreen ("Safe to Run")
-Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v7.1.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
+Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v7.2.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
 
 Once you purchase a certificate, you can securely sign the installer using the Windows SDK:
 ```powershell
-signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v7.1.0-setup.exe
+signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v7.2.0-setup.exe
 ```
 
 ### Building Installers on GitHub Actions
@@ -95,13 +95,13 @@ The workflow runs in three stages, so a mistake is caught before it costs a buil
 To cut a release:
 
 1. Bump `info.productVersion` in `wails.json`, then commit.
-2. Tag and push: `git tag v7.1 && git push --tags`
+2. Tag and push: `git tag v7.2 && git push --tags`
 3. The workflow builds and publishes the release.
 
 The installer filename is derived from `wails.json`, **not** from the tag, so the
 **Check version** job verifies the two agree before anything is built. Tags are
-compared on a zero-padded normal form, so the two-part `v7.1` used in this repo
-matches a `productVersion` of `7.1.0`; tagging `v7.2` against `7.1.0` fails in
+compared on a zero-padded normal form, so the two-part `v7.2` used in this repo
+matches a `productVersion` of `7.2.0`; tagging `v7.3` against `7.2.0` fails in
 seconds rather than after a full Windows build. A tag carrying a suffix
 (`v5.1-beta1`) is published as a prerelease.
 
@@ -147,6 +147,7 @@ Termi runs PowerShell via Windows ConPTY. Everything you can do in a normal term
 | Change shell (PowerShell / CMD / WSL) | **Ctrl+,** > Shell |
 | Set the folder new terminals open in | **Ctrl+,** > Startup Folder |
 | See the version / check for updates | Title bar, or **Ctrl+,** footer |
+| Hear about a new version | A bar above the tabs, a few seconds after launch |
 | Undo / redo in the command bar | **Ctrl+Z** / **Ctrl+Y** (or **Ctrl+Shift+Z**) |
 | Put a file's path in the command | Drag it onto the command bar, or copy it and press **Ctrl+V** there |
 | See every shortcut | **F1**, or the keyboard icon in the tab bar |
@@ -309,7 +310,7 @@ folder** in Settings.
 
 The running version shows in two places:
 
-- The window title bar — `Termi v7.1.0`
+- The window title bar — `Termi v7.2.0`
 - **Settings** (**Ctrl+,**) — the footer, next to **Check for updates**
 
 Both read the version from `wails.json`, which is embedded into the binary at build
@@ -317,10 +318,26 @@ time, so the title bar, the installer and the release tag can never disagree.
 
 A few seconds after launch Termi checks GitHub for a newer release, once. It stays
 silent unless there is one — being offline or rate limited is not worth a
-notification. When an update exists you get a toast, and the Settings footer links
-to the release page. Termi does not download or install anything by itself; you
-pick up the new installer from that page and run it, and your settings and history
-survive, as above.
+notification.
+
+When there is a newer version, a bar appears above the tabs naming it, the version
+you are on and how long ago it was released. It is not a toast: it stays until you
+act on it, because a notice that fades after five seconds is missed by anyone who
+launched Termi and looked away. Three choices:
+
+| Button | What it does |
+| --- | --- |
+| **View release** | Opens the release page in your browser |
+| **Skip this version** | Never mentions that release again — anything newer still gets a bar |
+| **✕** | Hides it until the next launch |
+
+Turn the whole thing off with **Update notice** in Settings (**Ctrl+,**), which also
+stops Termi contacting GitHub on its own; **Check for updates** in the Settings
+footer still works whenever you want to look, and ignores a skipped version. The
+skip is undone from the same place.
+
+Termi does not download or install anything by itself; you pick up the new installer
+from that page and run it, and your settings and history survive, as above.
 
 ### Auto-Complete
 

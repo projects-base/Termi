@@ -144,6 +144,42 @@ func (a *App) CheckForUpdate() UpdateCheck {
 	return result
 }
 
+// CheckForUpdateOnLaunch is the startup path. It honours the two preferences
+// that the Settings panel's manual check deliberately ignores: a user who
+// turned notifications off, and a release they chose to skip. Both come back as
+// Available false, so the launch banner simply stays hidden.
+//
+// The network call is skipped entirely when notifications are off, so turning
+// them off also stops Termi talking to GitHub at all.
+func (a *App) CheckForUpdateOnLaunch() UpdateCheck {
+	a.mu.Lock()
+	notify := a.settings.NotifyUpdates
+	skipped := a.settings.SkippedVersion
+	a.mu.Unlock()
+
+	if !notify {
+		return UpdateCheck{CurrentVersion: appInfo.Version}
+	}
+
+	result := a.CheckForUpdate()
+	result.Available = shouldNotify(result, skipped)
+	return result
+}
+
+// shouldNotify decides whether a finished check deserves a banner. Split out
+// from CheckForUpdateOnLaunch so the rule can be tested without a network call.
+func shouldNotify(result UpdateCheck, skipped string) bool {
+	if !result.Available {
+		return false
+	}
+	// A skipped version silences that release and older ones, never a newer
+	// one - skipping 7.2 should not hide 8.0.
+	if skipped == "" {
+		return true
+	}
+	return compareVersions(result.LatestVersion, skipped) > 0
+}
+
 // OpenURL hands a link to the system browser. Used for the release page.
 func (a *App) OpenURL(url string) {
 	if !strings.HasPrefix(url, "https://") {
