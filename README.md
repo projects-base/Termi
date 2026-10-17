@@ -62,14 +62,14 @@ If you want to distribute Termi to others with an official `.exe` Windows Instal
 This script will:
 - Read your exact version configuration from `wails.json`.
 - Spin up the Wails NSIS installer-compiler.
-- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v7.4.0.exe` and `Termi-v7.4.0-setup.exe`).
+- Generate and auto-rename your binaries dynamically into `build/bin/` (e.g. `Termi-v7.5.0.exe` and `Termi-v7.5.0-setup.exe`).
 
 ### Windows SmartScreen ("Safe to Run")
-Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v7.4.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
+Like all Windows applications downloaded from the web, end-users will be presented with a blue **"Windows protected your PC"** popup natively. To bypass this, Windows **strictly requires** you to physically cryptographically sign the `Termi-v7.5.0-setup.exe` executable using a purchased **Authenticode EV (Extended Validation) Code Signing Certificate** (from authorities like DigiCert, Sectigo, etc.).
 
 Once you purchase a certificate, you can securely sign the installer using the Windows SDK:
 ```powershell
-signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v7.4.0-setup.exe
+signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /f mycert.pfx /p password build/bin/Termi-v7.5.0-setup.exe
 ```
 
 ### Building Installers on GitHub Actions
@@ -95,13 +95,13 @@ The workflow runs in three stages, so a mistake is caught before it costs a buil
 To cut a release:
 
 1. Bump `info.productVersion` in `wails.json`, then commit.
-2. Tag and push: `git tag v7.4 && git push --tags`
+2. Tag and push: `git tag v7.5 && git push --tags`
 3. The workflow builds and publishes the release.
 
 The installer filename is derived from `wails.json`, **not** from the tag, so the
 **Check version** job verifies the two agree before anything is built. Tags are
-compared on a zero-padded normal form, so the two-part `v7.4` used in this repo
-matches a `productVersion` of `7.4.0`; tagging `v7.5` against `7.4.0` fails in
+compared on a zero-padded normal form, so the two-part `v7.5` used in this repo
+matches a `productVersion` of `7.5.0`; tagging `v7.6` against `7.5.0` fails in
 seconds rather than after a full Windows build. A tag carrying a suffix
 (`v5.1-beta1`) is published as a prerelease.
 
@@ -259,7 +259,10 @@ Everything Termi remembers sits in `%APPDATA%\termi\`:
 
 **Installing a new version does not touch any of it.** The installer only writes to
 the install folder under `Program Files`, so your settings, history and recent
-folders carry across an upgrade. Uninstalling clears the WebView2 cache
+folders carry across an upgrade. Each setting is saved by reading the file,
+changing the one value and writing it back through a rename, so a second Termi
+window cannot undo a change made in the first one and an interrupted write cannot
+leave a half-written file. Uninstalling clears the WebView2 cache
 (`%APPDATA%\Termi.exe`) but leaves `%APPDATA%\termi\` in place, so reinstalling
 later picks your settings back up.
 
@@ -313,7 +316,7 @@ folder** in Settings.
 
 The running version shows in two places:
 
-- The window title bar — `Termi v7.4.0`
+- The window title bar — `Termi v7.5.0`
 - **Settings** (**Ctrl+,**) — the footer, next to **Check for updates**
 
 Both read the version from `wails.json`, which is embedded into the binary at build

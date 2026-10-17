@@ -137,8 +137,7 @@ func generateID() string {
 
 // LoadSettings reads settings from disk, returning defaults if missing
 func (a *App) LoadSettings() Settings {
-	path := filepath.Join(configDir(), "settings.json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(settingsPath())
 	if err != nil {
 		return defaultSettings()
 	}
@@ -147,32 +146,90 @@ func (a *App) LoadSettings() Settings {
 	return s
 }
 
-// SaveSettings writes settings to disk and updates in-memory copy
-func (a *App) SaveSettings(s Settings) error {
-	a.mu.Lock()
-	a.settings = s
-	a.mu.Unlock()
-	return writeSettings(s)
+// settingsFileMu serialises the read-change-write cycles below. Several of
+// them run without the user asking - the first launch after an update, the
+// update banner - so two of them overlapping is not hypothetical.
+var settingsFileMu sync.Mutex
+
+func settingsPath() string {
+	return filepath.Join(configDir(), "settings.json")
 }
 
+// SaveSettings applies the fields the Settings panel owns.
+//
+// Only those fields. The panel sends a whole Settings value, but it has no
+// business setting the ones it does not show: a skipped version, or the
+// version that last ran. Taking the value wholesale let it blank them.
+func (a *App) SaveSettings(s Settings) error {
+	return a.mutateSettings(func(cur *Settings) {
+		cur.FontSize = s.FontSize
+		cur.Theme = s.Theme
+		cur.Shell = s.Shell
+		cur.StartupDir = s.StartupDir
+		cur.NotifyUpdates = s.NotifyUpdates
+	})
+}
+
+// mutateSettings changes settings.json by reading what is there, applying the
+// change, and writing it back.
+//
+// Reading first is the whole point. Settings live in one file and several
+// things write it, so a writer that starts from its own copy in memory undoes
+// anything saved since that copy was taken. That is how a startup folder could
+// vanish: a second Termi window - the one the installer offers to open for you
+// - writing one unrelated field was enough to put the file back to how it
+// looked when that window started.
+func (a *App) mutateSettings(change func(*Settings)) error {
+	settingsFileMu.Lock()
+	defer settingsFileMu.Unlock()
+
+	current := a.LoadSettings()
+	change(&current)
+
+	a.mu.Lock()
+	a.settings = current
+	a.mu.Unlock()
+
+	return writeSettingsLocked(current)
+}
+
+// writeSettings replaces settings.json with the value given, for the rare
+// caller that really does own every field.
 func writeSettings(s Settings) error {
+	settingsFileMu.Lock()
+	defer settingsFileMu.Unlock()
+	return writeSettingsLocked(s)
+}
+
+// writeSettingsLocked writes through a temporary file and a rename, so an
+// interrupted or failed write cannot leave a half-written settings.json for
+// the next launch to choke on. Rename over an existing file is atomic enough
+// on Windows for this purpose.
+func writeSettingsLocked(s Settings) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(configDir(), "settings.json"), data, 0644)
+
+	path := settingsPath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // SkipUpdateVersion records a release the user does not want to hear about
-// again. It writes the one field itself rather than going through
-// SaveSettings, because the banner is dismissed while the Settings panel is
-// shut - and that panel sends the whole settings object when it applies.
+// again. It writes that one field rather than going through SaveSettings,
+// because the banner is dismissed while the Settings panel is shut.
 func (a *App) SkipUpdateVersion(version string) error {
-	a.mu.Lock()
-	a.settings.SkippedVersion = strings.TrimSpace(version)
-	current := a.settings
-	a.mu.Unlock()
-	return writeSettings(current)
+	return a.mutateSettings(func(cur *Settings) {
+		cur.SkippedVersion = strings.TrimSpace(version)
+	})
 }
 
 // startupDir resolves where a new shell should open: the configured folder if it

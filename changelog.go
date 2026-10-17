@@ -262,17 +262,15 @@ func getJSON(client *http.Client, url string) ([]byte, error) {
 // A fresh install returns false: greeting someone with a list of changes to a
 // version they have never run is noise, not news.
 func (a *App) TakeWhatsNew() bool {
-	a.mu.Lock()
-	previous := strings.TrimSpace(a.settings.LastRunVersion)
-	a.settings.LastRunVersion = appInfo.Version
-	current := a.settings
-	a.mu.Unlock()
-
-	if previous != appInfo.Version {
-		// Writing this immediately matters: if Termi is closed again before
-		// anything else saves the settings, the panel must not come back.
-		writeSettings(current)
-	}
+	var previous string
+	// Read-change-write against the file rather than against this process's
+	// copy. This write lands immediately after a release is installed, which
+	// is exactly when a second window is likely to be open and to have saved
+	// something that must not be undone.
+	a.mutateSettings(func(cur *Settings) {
+		previous = strings.TrimSpace(cur.LastRunVersion)
+		cur.LastRunVersion = appInfo.Version
+	})
 
 	if previous == "" {
 		return false

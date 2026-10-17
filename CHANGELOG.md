@@ -12,7 +12,7 @@ implementation.
 The heading for a release has to be `## <version>`, three-part and with no `v`,
 or Termi will not find it and falls back to the commit subjects for that range.
 
-## 7.4.0 — 2026-10-17
+## 7.5.0 — 2026-10-17
 
 ### Added
 
@@ -21,6 +21,25 @@ or Termi will not find it and falls back to the commit subjects for that range.
   not land silently. The update bar can also show a version's entry before you
   install it, and Settings has a **What's new** link to read it again later.
 - This changelog.
+
+### Fixed
+
+- **A setting could vanish when two Termi windows were open.** Settings live in
+  one file, and each window wrote the whole of it from its own copy — so a
+  window that had been open a while would put the file back to how it looked
+  when it started, undoing anything saved since. Installing a release made this
+  likely, because the installer offers to open a second window. Every setting is
+  now saved by reading the file, changing the one thing, and writing it back.
+  The **Startup Folder** was the most visible casualty.
+- **The Settings panel can no longer blank settings it does not show**, such as
+  a skipped version.
+- **Settings are written through a temporary file and a rename**, so an
+  interrupted write cannot leave half a file behind for the next launch.
+- **The installer no longer starts Termi as administrator.** The installer needs
+  elevation, and anything it launched inherited it — so the terminal it opened
+  for you ran every command elevated, with nothing to show that it had.
+- **Installing while Termi is running now says so.** Windows will not replace a
+  running program, so that install would quietly leave the old one in place.
 
 ## 7.3.0 — 2026-10-17
 

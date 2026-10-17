@@ -58,8 +58,15 @@ ManifestDPIAware true
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
-# Finish page: offer to launch Termi after install
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+# Finish page: offer to launch Termi after install.
+#
+# Through a function rather than directly, because this installer runs elevated
+# and anything it starts inherits that. A terminal is the worst possible thing
+# to hand an administrator token by accident: every command typed into it would
+# run elevated, with no sign that anything was unusual. LaunchAsUser goes
+# through explorer.exe, which is running as the logged-in user.
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_FUNCTION LaunchAsUser
 !define MUI_FINISHPAGE_RUN_TEXT "Launch ${INFO_PRODUCTNAME}"
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
@@ -87,6 +94,33 @@ ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+
+   # Windows will not replace a running exe, so an upgrade over an open Termi
+   # leaves the old binary in place while everything else updates. Say so
+   # rather than letting it half-apply.
+   #
+   # Skipped when silent: the in-app updater closes Termi before running this,
+   # and there would be no one to answer a message box anyway.
+   IfSilent done_running_check
+   nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"'
+   Pop $0
+   Pop $1
+   ${If} $0 == 0
+     MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
+       "${INFO_PRODUCTNAME} is still running.$\r$\n$\r$\nClose it first, or this \
+install will not be able to replace the program itself.$\r$\n$\r$\nOK to continue \
+anyway, Cancel to stop." \
+       IDOK done_running_check
+     Abort
+   ${EndIf}
+   done_running_check:
+FunctionEnd
+
+# Starts Termi as the logged-in user. explorer.exe owns the desktop and runs
+# unelevated, so a process it launches is unelevated too - which is what we
+# want for a terminal, even though this installer needed admin rights.
+Function LaunchAsUser
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\${PRODUCT_EXECUTABLE}"'
 FunctionEnd
 
 ####

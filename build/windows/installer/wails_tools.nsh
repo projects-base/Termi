@@ -14,7 +14,7 @@
     !define INFO_PRODUCTNAME "Termi"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "7.4.0"
+    !define INFO_PRODUCTVERSION "7.5.0"
 !endif
 !ifndef INFO_COPYRIGHT
     !define INFO_COPYRIGHT "Copyright 2025 Akhil Alapati"
